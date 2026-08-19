@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import json
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,7 @@ from _routes.image_gen import router as image_gen_router
 from _routes.prompt_enhancement import router as prompt_enhancement_router
 from _routes.models import router as models_router
 from _routes.outputs import router as outputs_router
+from _routes.project_ingest import router as project_ingest_router
 from _routes.suggest_gap_prompt import router as suggest_gap_prompt_router
 from _routes.retake import router as retake_router
 from _routes.extend import router as extend_router
@@ -51,6 +53,32 @@ DEFAULT_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         "description": "Server Error",
     },
 }
+
+
+def _looks_like_json(body: bytes) -> bool:
+    stripped = body.lstrip()
+    return stripped.startswith(b"{") or stripped.startswith(b"[")
+
+
+def _strict_json_bytes(body: bytes) -> bytes | None:
+    """Re-encode JSON that contains raw control characters inside strings (curl $'...\\n...')."""
+    try:
+        json.loads(body)
+        return body
+    except json.JSONDecodeError:
+        pass
+    try:
+        parsed: object = json.loads(body, strict=False)
+    except json.JSONDecodeError:
+        return None
+    return json.dumps(parsed, ensure_ascii=False).encode("utf-8")
+
+
+def _replace_header(headers: list[tuple[bytes, bytes]], name: bytes, value: bytes) -> list[tuple[bytes, bytes]]:
+    lowered = name.lower()
+    replaced = [(key, val) for key, val in headers if key.lower() != lowered]
+    replaced.append((name, value))
+    return replaced
 
 
 def create_app(
@@ -122,6 +150,30 @@ def create_app(
             content=build_http_error_response(401, "Unauthorized").model_dump(),
         )
 
+    @app.middleware("http")
+    async def _coerce_json_content_type(  # pyright: ignore[reportUnusedFunction]
+        request: Request,
+        call_next: Callable[[Request], Awaitable[StarletteResponse]],
+    ) -> StarletteResponse:
+        # curl --data-raw defaults to application/x-www-form-urlencoded; if the body is JSON,
+        # treat it as JSON so Pydantic receives a dict instead of raw bytes.
+        if request.method in {"POST", "PUT", "PATCH"}:
+            body = await request.body()
+            if _looks_like_json(body):
+                headers = list(request.scope["headers"])
+                content_type = request.headers.get("content-type", "")
+                if "application/json" not in content_type.lower():
+                    headers = _replace_header(headers, b"content-type", b"application/json")
+                normalized = _strict_json_bytes(body)
+                if normalized is not None and normalized != body:
+                    # Starlette caches the first body() read; replace it with strict JSON.
+                    setattr(request, "_body", normalized)
+                    headers = _replace_header(
+                        headers, b"content-length", str(len(normalized)).encode("ascii")
+                    )
+                request.scope["headers"] = headers
+        return await call_next(request)
+
     async def _route_http_error_handler(request: Request, exc: Exception) -> JSONResponse:
         if isinstance(exc, HTTPError):
             log_http_error(request, exc)
@@ -168,6 +220,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(generation_router)
     app.include_router(outputs_router)
+    app.include_router(project_ingest_router)
     app.include_router(models_router)
     app.include_router(settings_router)
     app.include_router(image_gen_router)

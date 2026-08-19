@@ -10,6 +10,7 @@ import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal'
 import { DevPanel } from './components/DevPanel'
 import { useBackend } from './hooks/use-backend'
 import { useGenerationRecoveryWatcher } from './hooks/use-generation-recovery-watcher'
+import { useProjectIngestWatcher } from './hooks/use-project-ingest-watcher'
 import { logger } from './lib/logger'
 import { Home } from './views/Home'
 import { Project } from './views/Project'
@@ -36,6 +37,7 @@ function AppContent() {
   // Always mounted here (unlike GenSpace, which unmounts on every view/tab switch) so a
   // generation that finishes while its project isn't open still gets persisted.
   useGenerationRecoveryWatcher()
+  useProjectIngestWatcher()
 
   const [pythonReady, setPythonReady] = useState<boolean | null>(null)
   const [backendStarted, setBackendStarted] = useState(false)

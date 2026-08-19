@@ -366,6 +366,23 @@ class StatusResponse(BaseModel):
     status: str
 
 
+class ProjectIngestJob(BaseModel):
+    id: str
+    projectName: str
+    video_path: str
+    prompt: str
+    model: str
+    resolution: str
+    duration: float | None
+    fps: int
+    audio: bool
+    createdAt: float
+
+
+class ProjectIngestListResponse(BaseModel):
+    jobs: list[ProjectIngestJob]
+
+
 class HTTPErrorResponse(BaseModel):
     code: str
     message: str
@@ -459,6 +476,7 @@ class GenerateVideoRequest(BaseModel):
     aspectRatio: Literal["16:9", "9:16"] = "16:9"
     seed: int | None = None
     loras: list[LoraEntry] = Field(default_factory=list[LoraEntry])
+    projectName: str | None = None
 
 
 class GenerateImageRequest(BaseModel):

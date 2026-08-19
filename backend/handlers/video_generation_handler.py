@@ -43,6 +43,7 @@ from handlers.base import StateHandlerBase
 from server_utils.heartbeat import log_heartbeat
 from handlers.generation_handler import GenerationHandler
 from handlers.pipelines_handler import PipelinesHandler
+from handlers.project_ingest_handler import ProjectIngestHandler
 from handlers.prompt_enhancement_handler import PromptEnhancementHandler
 from handlers.text_handler import TextHandler
 from runtime_config.model_download_specs import is_duration_head_ready, resolve_active_ltx_model_id
@@ -103,6 +104,7 @@ class VideoGenerationHandler(StateHandlerBase):
         prompt_enhancement_handler: PromptEnhancementHandler,
         ltx_api_client: LTXAPIClient,
         config: RuntimeConfig,
+        project_ingest_handler: ProjectIngestHandler,
     ) -> None:
         super().__init__(state, lock, config)
         self._generation = generation_handler
@@ -110,6 +112,7 @@ class VideoGenerationHandler(StateHandlerBase):
         self._text = text_handler
         self._prompt_enhancement = prompt_enhancement_handler
         self._ltx_api_client = ltx_api_client
+        self._project_ingest = project_ingest_handler
 
     def _resolve_prompt_enhancement(
         self, prompt: str, *, image_path: str | None
@@ -262,6 +265,7 @@ class VideoGenerationHandler(StateHandlerBase):
                 )
 
                 self._generation.complete_generation(output_path)
+                self._project_ingest.enqueue_from_generate(req, str(output_path), generation_id)
                 return _complete_video_response(output_path)
 
             except HTTPError as e:
@@ -475,6 +479,7 @@ class VideoGenerationHandler(StateHandlerBase):
 
             self._generation.update_progress("complete", 100, total_steps, total_steps)
             self._generation.complete_generation(str(output_path))
+            self._project_ingest.enqueue_from_generate(req, str(output_path), generation_id)
             return _complete_video_response(output_path)
 
         except HTTPError as e:
@@ -642,6 +647,7 @@ class VideoGenerationHandler(StateHandlerBase):
 
                 self._generation.update_progress("complete", 100, None, None)
                 self._generation.complete_generation(str(output_path))
+                self._project_ingest.enqueue_from_generate(req, str(output_path), generation_id)
                 return _complete_video_response(output_path)
             except HTTPError as e:
                 self._generation.fail_generation(e.detail)

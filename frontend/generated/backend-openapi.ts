@@ -621,6 +621,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/project-ingest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Route List Project Ingest */
+        get: operations["route_list_project_ingest_api_project_ingest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/project-ingest/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Route Delete Project Ingest */
+        delete: operations["route_delete_project_ingest_api_project_ingest__job_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/retake": {
         parameters: {
             query?: never;
@@ -1144,6 +1178,8 @@ export interface components {
              * @default
              */
             negativePrompt: string;
+            /** Projectname */
+            projectName?: string | null;
             /** Prompt */
             prompt: string;
             /**
@@ -1964,6 +2000,34 @@ export interface components {
             };
             /** Utility */
             utility: string;
+        };
+        /** ProjectIngestJob */
+        ProjectIngestJob: {
+            /** Audio */
+            audio: boolean;
+            /** Createdat */
+            createdAt: number;
+            /** Duration */
+            duration: number | null;
+            /** Fps */
+            fps: number;
+            /** Id */
+            id: string;
+            /** Model */
+            model: string;
+            /** Projectname */
+            projectName: string;
+            /** Prompt */
+            prompt: string;
+            /** Resolution */
+            resolution: string;
+            /** Video Path */
+            video_path: string;
+        };
+        /** ProjectIngestListResponse */
+        ProjectIngestListResponse: {
+            /** Jobs */
+            jobs: components["schemas"]["ProjectIngestJob"][];
         };
         /** PromptTemplatePlaceholder */
         PromptTemplatePlaceholder: {
@@ -3613,6 +3677,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
+    route_list_project_ingest_api_project_ingest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectIngestListResponse"];
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
+    route_delete_project_ingest_api_project_ingest__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
                 };
             };
             /** @description Client Error */

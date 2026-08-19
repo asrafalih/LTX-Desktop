@@ -1179,6 +1179,17 @@
             "title": "Negativeprompt",
             "type": "string"
           },
+          "projectName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectname"
+          },
           "prompt": {
             "minLength": 1,
             "title": "Prompt",
@@ -3608,6 +3619,87 @@
         "title": "PreprocessingStep",
         "type": "object"
       },
+      "ProjectIngestJob": {
+        "properties": {
+          "audio": {
+            "title": "Audio",
+            "type": "boolean"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "number"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "fps": {
+            "title": "Fps",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "projectName": {
+            "title": "Projectname",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "video_path": {
+            "title": "Video Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "projectName",
+          "video_path",
+          "prompt",
+          "model",
+          "resolution",
+          "duration",
+          "fps",
+          "audio",
+          "createdAt"
+        ],
+        "title": "ProjectIngestJob",
+        "type": "object"
+      },
+      "ProjectIngestListResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectIngestJob"
+            },
+            "title": "Jobs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "jobs"
+        ],
+        "title": "ProjectIngestListResponse",
+        "type": "object"
+      },
       "PromptTemplatePlaceholder": {
         "properties": {
           "choices": {
@@ -5906,6 +5998,99 @@
         "summary": "Route Get Output",
         "tags": [
           "outputs"
+        ]
+      }
+    },
+    "/api/project-ingest": {
+      "get": {
+        "operationId": "route_list_project_ingest_api_project_ingest_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectIngestListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route List Project Ingest",
+        "tags": [
+          "project-ingest"
+        ]
+      }
+    },
+    "/api/project-ingest/{job_id}": {
+      "delete": {
+        "operationId": "route_delete_project_ingest_api_project_ingest__job_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Delete Project Ingest",
+        "tags": [
+          "project-ingest"
         ]
       }
     },

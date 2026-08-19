@@ -381,6 +381,20 @@ export class ApiClient {
 
   static getGenerationProgress = makeEndpointClient('/api/generation/progress', 'get')
 
+  static listProjectIngest = makeEndpointClient('/api/project-ingest', 'get')
+
+  static deleteProjectIngest(
+    jobId: string,
+  ): Promise<EndpointResult<'/api/project-ingest/{job_id}', 'delete'>> {
+    return requestEndpointResult(
+      '/api/project-ingest/{job_id}',
+      'delete',
+      [] as const,
+      undefined,
+      `/api/project-ingest/${encodeURIComponent(jobId)}`,
+    )
+  }
+
   static generateImage = makeEndpointClient('/api/generate-image', 'post')
 
   static enhancePrompt = makeEndpointClient('/api/enhance-prompt', 'post', {
