@@ -369,7 +369,7 @@ class StatusResponse(BaseModel):
 class ProjectIngestJob(BaseModel):
     id: str
     projectName: str
-    video_path: str
+    video_path: str = ""
     prompt: str
     model: str
     resolution: str

@@ -29,6 +29,30 @@ export function hasValidBaselineId(ctx: GenerationRecoveryContext): boolean {
   return typeof ctx.baselineId === 'string' || ctx.baselineId === null
 }
 
+export function readGenerationRecoveryContext(): GenerationRecoveryContext | null {
+  const saved = localStorage.getItem(GENERATION_RECOVERY_KEY)
+  if (!saved) return null
+  try {
+    const ctx = JSON.parse(saved) as GenerationRecoveryContext
+    return hasValidBaselineId(ctx) ? ctx : null
+  } catch {
+    return null
+  }
+}
+
+// The ingest watcher writes this marker after generate has already begun. If we stored the
+// live progress id as baselineId, GenSpace's mount recovery treats id === baselineId as
+// "not started yet" and never shows the generating tile.
+export function ingestRecoveryIdentity(
+  jobId: string,
+  observedProgressId: string | null,
+): Pick<GenerationRecoveryContext, 'baselineId' | 'generationId'> {
+  if (observedProgressId === jobId) {
+    return { baselineId: null, generationId: jobId }
+  }
+  return { baselineId: observedProgressId }
+}
+
 // The project whose GenSpace instance is currently mounted and already handling its own
 // generation lifecycle live (polling, completion effects). The background watcher backs off
 // entirely for it, so two independent pollers never race to import the same completion twice.
@@ -36,6 +60,19 @@ let activeOwnerProjectId: string | null = null
 
 export function setActiveGenerationOwner(projectId: string | null): void {
   activeOwnerProjectId = projectId
+}
+
+export function isActiveGenerationOwner(projectId: string): boolean {
+  return activeOwnerProjectId === projectId
+}
+
+// Curl ingest writes a recovery marker for Stop/progress, then copies the file itself when
+// video_path is filled. While that job is claimed, background recovery must not also import.
+const ingestOwnedGenerationIds = new Set<string>()
+
+export function setIngestOwnedGeneration(generationId: string, owned: boolean): void {
+  if (owned) ingestOwnedGenerationIds.add(generationId)
+  else ingestOwnedGenerationIds.delete(generationId)
 }
 
 // One check: is there a recovery marker, is anything registered to handle it, and if the
@@ -74,6 +111,14 @@ export async function checkAndConsumeRecovery(
   if (!progress.ok) return
   const observedId = progress.data.id
   const status = progress.data.status
+
+  if (observedId != null && ingestOwnedGenerationIds.has(observedId)) {
+    if (ctx.generationId == null && observedId !== ctx.baselineId) {
+      ctx = { ...ctx, generationId: observedId }
+      localStorage.setItem(GENERATION_RECOVERY_KEY, JSON.stringify(ctx))
+    }
+    return
+  }
 
   if (ctx.generationId == null) {
     // Not yet confirmed. Any id different from the baseline captured when this marker was

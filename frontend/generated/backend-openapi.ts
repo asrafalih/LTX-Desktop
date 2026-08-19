@@ -2021,7 +2021,10 @@ export interface components {
             prompt: string;
             /** Resolution */
             resolution: string;
-            /** Video Path */
+            /**
+             * Video Path
+             * @default
+             */
             video_path: string;
         };
         /** ProjectIngestListResponse */

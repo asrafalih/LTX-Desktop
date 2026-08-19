@@ -10,6 +10,7 @@ import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
 import { useAppSettings } from '../contexts/AppSettingsContext'
 import { useGeneration, GENERATION_RECOVERY_KEY, type GenerationRecoveryContext } from '../hooks/use-generation'
 import { setActiveGenerationOwner, hasValidBaselineId } from '../lib/generation-recovery'
+import { subscribeWhileGenerationMayBeActive } from '../lib/generation-progress-poll'
 import { withGenerationActive, canCancelLocalJob } from '../lib/generation-active'
 import { useVideoGenerationModelSpecs } from '../hooks/use-video-generation-model-specs'
 import { createLocalGenerationError, type GenerationError } from '../lib/generation-errors'
@@ -1718,38 +1719,42 @@ export function GenSpace() {
   }, [currentProjectId, isAnyLocalGenerationInFlight])
 
   useEffect(() => {
-    const saved = localStorage.getItem(GENERATION_RECOVERY_KEY)
-    if (!saved) return
-    let ctx: GenerationRecoveryContext
-    try { ctx = JSON.parse(saved) as GenerationRecoveryContext } catch { return }
-    if (!hasValidBaselineId(ctx)) return // legacy/corrupt marker — the watcher will drop it
-    // Belongs to a different project (e.g. the user started this generation in project A, then
-    // navigated Home and into project B — GenSpace remounts per project). Not ours to touch.
-    if (ctx.projectId !== currentProjectIdRef.current) return
-    // Enhance recovery is handled by its own effect (different state: isEnhancingPrompt, not
-    // isGenerating/videoPath/imagePath) — leave the marker for it to consume.
-    if (ctx.genType === 'enhance') return
+    let cancelled = false
+    let resumed = false
 
-    void (async () => {
-      const progress = await ApiClient.getGenerationProgress()
+    const tryResumeFromMarker = async (
+      progress: Awaited<ReturnType<typeof ApiClient.getGenerationProgress>>,
+    ) => {
+      if (cancelled || resumed) return
+      const saved = localStorage.getItem(GENERATION_RECOVERY_KEY)
+      if (!saved) return
+      let ctx: GenerationRecoveryContext
+      try { ctx = JSON.parse(saved) as GenerationRecoveryContext } catch { return }
+      if (!hasValidBaselineId(ctx)) return
+      if (ctx.projectId !== currentProjectIdRef.current) return
+      if (ctx.genType === 'enhance') return
       if (!progress.ok) return
-      // Same identity check as the background watcher (checkAndConsumeRecovery in
-      // lib/generation-recovery.ts): the handler that starts a generation loads its pipeline —
-      // which can take many seconds, worse for image models loading checkpoint shards — BEFORE
-      // it ever reports a new id, so a poll right after remounting can still be looking at
-      // whatever the single global progress slot held before this marker was even written.
-      if (progress.data.id === ctx.baselineId) return // unchanged since before we wrote this marker — not started reporting yet
-      if (progress.data.status !== 'running') return // already past 'running' (complete/error/etc) — that's the watcher's job to persist, not ours to restore UI for
 
+      const observedId = progress.data.id
+      // Ingest markers may be written after the job is already reporting, with generationId
+      // set to that job. Trust the confirmed id rather than requiring id !== baselineId.
+      if (ctx.generationId != null) {
+        if (observedId !== ctx.generationId) return
+      } else if (observedId === ctx.baselineId) {
+        return
+      }
+      if (progress.data.status !== 'running') return
+
+      resumed = true
       const status = await resumeIfRunning()
-      if (status !== 'running') return // finished between our two checks — again, the watcher's job now
+      if (cancelled) return
+      if (status !== 'running') {
+        resumed = false
+        return
+      }
 
-      // Restore the inputs the completion effect reads, so the recovered asset is eventually
-      // persisted (once it finishes) with the right prompt/mode/settings (incl. selected LoRAs),
-      // not an empty prompt and default settings.
       setPrompt(ctx.prompt)
       setLastPrompt(ctx.prompt)
-      // ic-lora/retake carry no settings: recover as a standalone video asset.
       const s = ctx.settings
       if (!s) {
         setMode('video')
@@ -1770,16 +1775,17 @@ export function GenSpace() {
           variations: s.variations ?? prev.variations,
           imageEditStrength: s.imageEditStrength ?? prev.imageEditStrength,
         }))
-        // The completion effect reads this ref (not settings/inputImage) to tag a
-        // recovered image asset as an edit — restore it so recovery matches the
-        // live handleGenerate() path.
         if (ctx.genType === 'image' && ctx.inputImageUrl) {
           lastImageEditRef.current = { source: ctx.inputImageUrl, strength: s.imageEditStrength ?? 0.6 }
         }
       }
-    })()
+    }
+
+    return subscribeWhileGenerationMayBeActive(result => {
+      void tryResumeFromMarker(result)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // mount only
+  }, [resumeIfRunning])
 
   // When video generation completes, add to project assets
   useEffect(() => {

@@ -27,7 +27,45 @@ class ProjectIngestHandler:
         self._dir = config.app_data_dir / "project_ingest"
         self._dir.mkdir(parents=True, exist_ok=True)
 
+    def begin_from_generate(self, req: GenerateVideoRequest, job_id: str) -> None:
+        self._write_from_generate(req, video_path="", job_id=job_id)
+
     def enqueue_from_generate(self, req: GenerateVideoRequest, video_path: str, job_id: str) -> None:
+        self._write_from_generate(req, video_path=video_path, job_id=job_id)
+
+    def drop_if_incomplete(self, job_id: str) -> None:
+        if not _JOB_ID_PATTERN.fullmatch(job_id):
+            return
+        path = self._job_path(job_id)
+        if not path.is_file():
+            return
+        try:
+            job = ProjectIngestJob.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError, ValueError):
+            path.unlink(missing_ok=True)
+            return
+        if job.video_path:
+            return
+        path.unlink(missing_ok=True)
+
+    def list_jobs(self) -> ProjectIngestListResponse:
+        jobs: list[ProjectIngestJob] = []
+        for path in sorted(self._dir.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                jobs.append(ProjectIngestJob.model_validate(payload))
+            except (OSError, json.JSONDecodeError, ValueError):
+                logger.warning("Skipping unreadable ingest job file: %s", path.name)
+        return ProjectIngestListResponse(jobs=jobs)
+
+    def delete_job(self, job_id: str) -> None:
+        path = self._resolve_job_file(job_id)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            raise HTTPError(404, "Ingest job not found") from None
+
+    def _write_from_generate(self, req: GenerateVideoRequest, *, video_path: str, job_id: str) -> None:
         project_name = normalize_project_name(req.projectName)
         if project_name is None:
             return
@@ -47,25 +85,7 @@ class ProjectIngestHandler:
             audio=req.audio,
             createdAt=time.time(),
         )
-        path = self._job_path(job_id)
-        path.write_text(job.model_dump_json(), encoding="utf-8")
-
-    def list_jobs(self) -> ProjectIngestListResponse:
-        jobs: list[ProjectIngestJob] = []
-        for path in sorted(self._dir.glob("*.json")):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                jobs.append(ProjectIngestJob.model_validate(payload))
-            except (OSError, json.JSONDecodeError, ValueError):
-                logger.warning("Skipping unreadable ingest job file: %s", path.name)
-        return ProjectIngestListResponse(jobs=jobs)
-
-    def delete_job(self, job_id: str) -> None:
-        path = self._resolve_job_file(job_id)
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            raise HTTPError(404, "Ingest job not found") from None
+        self._job_path(job_id).write_text(job.model_dump_json(), encoding="utf-8")
 
     def _resolve_job_file(self, job_id: str) -> Path:
         if not _JOB_ID_PATTERN.fullmatch(job_id):

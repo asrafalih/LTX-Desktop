@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Folder, MoreVertical, Trash2, Pencil } from 'lucide-react'
+import { Plus, Folder, MoreVertical, Trash2, Pencil, Loader2 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
 import { LtxLogo } from '../components/LtxLogo'
 import { Button } from '../components/ui/button'
 import { pathToFileUrl } from '../lib/file-url'
+import { subscribeWhileGenerationMayBeActive } from '../lib/generation-progress-poll'
+import { readGenerationRecoveryContext } from '../lib/generation-recovery'
 import type { Project } from '../types/project-model'
 import { useProjectReferencesMigration } from '../hooks/useProjectReferencesMigration'
 
@@ -19,11 +21,26 @@ function formatDate(timestamp: number): string {
   })
 }
 
-function ProjectCard({ project, onOpen, onDelete, onRename }: {
+function useGeneratingProjectId(): string | null {
+  const [projectId, setProjectId] = useState(() => readGenerationRecoveryContext()?.projectId ?? null)
+  useEffect(() => {
+    const sync = () => setProjectId(readGenerationRecoveryContext()?.projectId ?? null)
+    const unsubscribe = subscribeWhileGenerationMayBeActive(sync)
+    const timer = window.setInterval(sync, 1000)
+    return () => {
+      unsubscribe()
+      window.clearInterval(timer)
+    }
+  }, [])
+  return projectId
+}
+
+function ProjectCard({ project, onOpen, onDelete, onRename, isGenerating }: {
   project: Project
   onOpen: () => void
   onDelete: () => void
   onRename: () => void
+  isGenerating: boolean
 }) {
   const [showMenu, setShowMenu] = useState(false)
   const [imgError, setImgError] = useState(false)
@@ -75,6 +92,12 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
         ) : (
           <Folder className="h-12 w-12 text-zinc-600" />
         )}
+        {isGenerating && (
+          <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-2">
+            <Loader2 className="h-8 w-8 text-white animate-spin" />
+            <span className="text-sm font-medium text-white">Generating…</span>
+          </div>
+        )}
         {/* Hover overlay */}
         <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
@@ -82,7 +105,9 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
       {/* Info */}
       <div className="p-3">
         <h3 className="font-medium text-white truncate">{project.name}</h3>
-        <p className="text-xs text-zinc-500 mt-1">{formatDate(project.updatedAt)}</p>
+        <p className="text-xs text-zinc-500 mt-1">
+          {isGenerating ? 'Generating video…' : formatDate(project.updatedAt)}
+        </p>
       </div>
       
       {/* Menu button */}
@@ -125,6 +150,7 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
 export function Home() {
   const { projectIds, getProject, createProject, deleteProject, renameProject } = useProjects()
   const { openProject } = useView()
+  const generatingProjectId = useGeneratingProjectId()
   const { migrationStatus, migrateProjects } = useProjectReferencesMigration()
   const [isCreating, setIsCreating] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
@@ -277,6 +303,7 @@ export function Home() {
                 <ProjectCard
                   key={project.id}
                   project={project}
+                  isGenerating={project.id === generatingProjectId}
                   onOpen={() => openProject(project.id)}
                   onDelete={() => {
                     if (confirm(`Delete "${project.name}"?`)) {

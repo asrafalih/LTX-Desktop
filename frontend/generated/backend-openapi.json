@@ -3665,6 +3665,7 @@
             "type": "string"
           },
           "video_path": {
+            "default": "",
             "title": "Video Path",
             "type": "string"
           }
@@ -3672,7 +3673,6 @@
         "required": [
           "id",
           "projectName",
-          "video_path",
           "prompt",
           "model",
           "resolution",

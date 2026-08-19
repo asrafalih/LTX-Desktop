@@ -235,17 +235,18 @@ class VideoGenerationHandler(StateHandlerBase):
                 logger.info("Image: %s -> %sx%s", image_path, width, height)
 
             generation_id = self._make_generation_id()
-            seed = req.seed if req.seed is not None else self._resolve_seed()
-            loras = self._resolve_loras(req.loras)
-
-            # Before the pipeline loads and before the generation is marked running: local
-            # enhancement needs the VRAM a resident pipeline holds, and evicting a pipeline is
-            # refused once a generation is running.
-            prompt, enhance_via_api = self._resolve_prompt_enhancement(
-                req.prompt, image_path=image_path
-            )
-
+            self._project_ingest.begin_from_generate(req, generation_id)
             try:
+                seed = req.seed if req.seed is not None else self._resolve_seed()
+                loras = self._resolve_loras(req.loras)
+
+                # Before the pipeline loads and before the generation is marked running: local
+                # enhancement needs the VRAM a resident pipeline holds, and evicting a pipeline is
+                # refused once a generation is running.
+                prompt, enhance_via_api = self._resolve_prompt_enhancement(
+                    req.prompt, image_path=image_path
+                )
+
                 self._generation.raise_if_cancelled()
                 self._pipelines.load_gpu_pipeline("fast", loras=loras)
                 self._generation.start_generation(generation_id)
@@ -270,9 +271,11 @@ class VideoGenerationHandler(StateHandlerBase):
 
             except HTTPError as e:
                 self._generation.fail_generation(e.detail)
+                self._project_ingest.drop_if_incomplete(generation_id)
                 raise
             except Exception as e:
                 self._generation.fail_generation(str(e))
+                self._project_ingest.drop_if_incomplete(generation_id)
                 if is_cancel_exception(e):
                     logger.info("Generation cancelled by user")
                     return GenerateVideoCancelledResponse(status="cancelled")
@@ -423,6 +426,7 @@ class VideoGenerationHandler(StateHandlerBase):
         loras = self._resolve_loras(req.loras)
 
         generation_id = self._make_generation_id()
+        self._project_ingest.begin_from_generate(req, generation_id)
 
         try:
             neg = req.negativePrompt if req.negativePrompt else self.config.default_negative_prompt
@@ -484,9 +488,11 @@ class VideoGenerationHandler(StateHandlerBase):
 
         except HTTPError as e:
             self._generation.fail_generation(e.detail)
+            self._project_ingest.drop_if_incomplete(generation_id)
             raise
         except Exception as e:
             self._generation.fail_generation(str(e))
+            self._project_ingest.drop_if_incomplete(generation_id)
             if is_cancel_exception(e):
                 logger.info("Generation cancelled by user")
                 return GenerateVideoCancelledResponse(status="cancelled")
@@ -532,14 +538,15 @@ class VideoGenerationHandler(StateHandlerBase):
         with self._generation.reserved_generation_start():
 
             generation_id = self._make_generation_id()
-            self._generation.start_api_generation(generation_id)
-
-            audio_path = normalize_optional_path(req.audioPath)
-            image_path = normalize_optional_path(req.imagePath)
-            has_input_audio = bool(audio_path)
-            has_input_image = bool(image_path)
-
+            self._project_ingest.begin_from_generate(req, generation_id)
             try:
+                self._generation.start_api_generation(generation_id)
+
+                audio_path = normalize_optional_path(req.audioPath)
+                image_path = normalize_optional_path(req.imagePath)
+                has_input_audio = bool(audio_path)
+                has_input_image = bool(image_path)
+
                 self._generation.update_progress("validating_request", 5, None, None)
 
                 api_key = self.state.app_settings.ltx_api_key.strip()
@@ -651,13 +658,16 @@ class VideoGenerationHandler(StateHandlerBase):
                 return _complete_video_response(output_path)
             except HTTPError as e:
                 self._generation.fail_generation(e.detail)
+                self._project_ingest.drop_if_incomplete(generation_id)
                 raise
             except LTXAPIClientError as e:
                 mapped_error = self._map_ltx_api_generation_error(e)
                 self._generation.fail_generation(mapped_error.detail)
+                self._project_ingest.drop_if_incomplete(generation_id)
                 raise mapped_error from e
             except Exception as e:
                 self._generation.fail_generation(str(e))
+                self._project_ingest.drop_if_incomplete(generation_id)
                 if is_cancel_exception(e):
                     logger.info("Generation cancelled by user")
                     return GenerateVideoCancelledResponse(status="cancelled")
