@@ -159,6 +159,7 @@ class SuggestGapPromptResponse(BaseModel):
 class GenerateVideoCompleteResponse(BaseModel):
     status: Literal["complete"]
     video_path: str
+    video_url: str
 
 
 class GenerateVideoCancelledResponse(BaseModel):

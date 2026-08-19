@@ -38,6 +38,7 @@ from api_model_specs import (
     supported_duration_range,
     validate_generate_video_request,
 )
+from handlers.outputs_handler import public_output_url
 from handlers.base import StateHandlerBase
 from server_utils.heartbeat import log_heartbeat
 from handlers.generation_handler import GenerationHandler
@@ -60,6 +61,15 @@ if TYPE_CHECKING:
     from runtime_config.runtime_config import RuntimeConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _complete_video_response(video_path: str | Path) -> GenerateVideoCompleteResponse:
+    path_str = str(video_path)
+    return GenerateVideoCompleteResponse(
+        status="complete",
+        video_path=path_str,
+        video_url=public_output_url(path_str),
+    )
 
 
 def _wxh(size: tuple[int, int]) -> str:
@@ -252,7 +262,7 @@ class VideoGenerationHandler(StateHandlerBase):
                 )
 
                 self._generation.complete_generation(output_path)
-                return GenerateVideoCompleteResponse(status="complete", video_path=output_path)
+                return _complete_video_response(output_path)
 
             except HTTPError as e:
                 self._generation.fail_generation(e.detail)
@@ -465,7 +475,7 @@ class VideoGenerationHandler(StateHandlerBase):
 
             self._generation.update_progress("complete", 100, total_steps, total_steps)
             self._generation.complete_generation(str(output_path))
-            return GenerateVideoCompleteResponse(status="complete", video_path=str(output_path))
+            return _complete_video_response(output_path)
 
         except HTTPError as e:
             self._generation.fail_generation(e.detail)
@@ -632,7 +642,7 @@ class VideoGenerationHandler(StateHandlerBase):
 
                 self._generation.update_progress("complete", 100, None, None)
                 self._generation.complete_generation(str(output_path))
-                return GenerateVideoCompleteResponse(status="complete", video_path=str(output_path))
+                return _complete_video_response(output_path)
             except HTTPError as e:
                 self._generation.fail_generation(e.detail)
                 raise

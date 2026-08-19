@@ -140,6 +140,7 @@ class TestGenerate:
         assert data["status"] == "complete"
         assert data["video_path"] is not None
         assert Path(data["video_path"]).exists()
+        assert data["video_url"] == f"/api/outputs/{Path(data['video_path']).name}"
 
         pipeline = fake_services.fast_video_pipeline
         assert len(pipeline.generate_calls) == 1

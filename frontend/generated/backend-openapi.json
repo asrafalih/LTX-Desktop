@@ -1030,11 +1030,16 @@
           "video_path": {
             "title": "Video Path",
             "type": "string"
+          },
+          "video_url": {
+            "title": "Video Url",
+            "type": "string"
           }
         },
         "required": [
           "status",
-          "video_path"
+          "video_path",
+          "video_url"
         ],
         "title": "GenerateVideoCompleteResponse",
         "type": "object"
@@ -5851,6 +5856,56 @@
         "summary": "Route Text Encoder Recommendation",
         "tags": [
           "models"
+        ]
+      }
+    },
+    "/api/outputs/{filename}": {
+      "get": {
+        "operationId": "route_get_output_api_outputs__filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Get Output",
+        "tags": [
+          "outputs"
         ]
       }
     },

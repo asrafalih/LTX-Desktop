@@ -604,6 +604,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/outputs/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Route Get Output */
+        get: operations["route_get_output_api_outputs__filename__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/retake": {
         parameters: {
             query?: never;
@@ -1070,6 +1087,8 @@ export interface components {
             status: "complete";
             /** Video Path */
             video_path: string;
+            /** Video Url */
+            video_url: string;
         };
         /** GenerateVideoModelsSpecsResponse */
         GenerateVideoModelsSpecsResponse: {
@@ -3554,6 +3573,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TextEncoderRecommendationResponse"];
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
+    route_get_output_api_outputs__filename__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Client Error */

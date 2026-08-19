@@ -14,6 +14,7 @@ from handlers import (
     IcLoraHandler,
     ImageGenerationHandler,
     ModelsHandler,
+    OutputsHandler,
     PipelinesHandler,
     LoraCatalogHandler,
     PromptEnhancementHandler,
@@ -215,6 +216,7 @@ class AppHandler:
         )
 
         self.runtime_policy = RuntimePolicyHandler(config=config)
+        self.outputs = OutputsHandler(config=config)
 
         self.suggest_gap_prompt = SuggestGapPromptHandler(
             state=self.state,
