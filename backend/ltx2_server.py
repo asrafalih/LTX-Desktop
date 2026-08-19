@@ -293,9 +293,16 @@ runtime_config = RuntimeConfig(
 handler = build_initial_state(runtime_config, DEFAULT_APP_SETTINGS)
 
 auth_token = os.environ.get("LTX_AUTH_TOKEN", "")
+api_token = os.environ.get("LTX_API_TOKEN", "")
 admin_token = os.environ.get("LTX_ADMIN_TOKEN", "")
 
-app = create_app(handler=handler, allowed_origins=DEFAULT_ALLOWED_ORIGINS, auth_token=auth_token, admin_token=admin_token)
+app = create_app(
+    handler=handler,
+    allowed_origins=DEFAULT_ALLOWED_ORIGINS,
+    auth_token=auth_token,
+    api_token=api_token,
+    admin_token=admin_token,
+)
 
 
 def precache_model_files(model_dir: Path) -> int:

@@ -59,6 +59,7 @@ def create_app(
     allowed_origins: list[str] | None = None,
     title: str = "LTX-2 Video Generation Server",
     auth_token: str = "",
+    api_token: str = "",
     admin_token: str = "",
 ) -> FastAPI:
     """Create a configured FastAPI app bound to the provided handler."""
@@ -73,19 +74,28 @@ def create_app(
         allow_headers=["*"],
     )
 
+    secrets = tuple(token for token in (auth_token, api_token) if token)
+
     @app.middleware("http")
     async def _auth_middleware(  # pyright: ignore[reportUnusedFunction]
         request: Request,
         call_next: Callable[[Request], Awaitable[StarletteResponse]],
     ) -> StarletteResponse:
-        if not auth_token:
+        if not secrets:
             return await call_next(request)
         if request.method == "OPTIONS":
             return await call_next(request)
         if request.url.path == "/api/auth/huggingface/callback":
             return await call_next(request)
         def _token_matches(candidate: str) -> bool:
-            return hmac.compare_digest(candidate, auth_token)
+            matched = False
+            for secret in secrets:
+                try:
+                    if hmac.compare_digest(candidate, secret):
+                        matched = True
+                except (TypeError, ValueError):
+                    pass
+            return matched
 
         # WebSocket: check query param
         if request.headers.get("upgrade", "").lower() == "websocket":

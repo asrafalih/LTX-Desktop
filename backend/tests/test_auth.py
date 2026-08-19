@@ -72,3 +72,23 @@ def test_websocket_with_token_query_param(test_state):
         )
         # The route may not exist, but auth should pass (not 401)
         assert response.status_code != 401
+
+
+def test_session_or_api_token_both_accepted(test_state):
+    app = create_app(handler=test_state, auth_token="session-secret", api_token="lan-secret")
+    with TestClient(app) as client:
+        session = client.get("/health", headers={"Authorization": "Bearer session-secret"})
+        assert session.status_code == 200
+        lan = client.get("/health", headers={"Authorization": "Bearer lan-secret"})
+        assert lan.status_code == 200
+        wrong = client.get("/health", headers={"Authorization": "Bearer other-secret"})
+        assert_http_error(wrong, status_code=401, code="HTTP_401", message="Unauthorized")
+
+
+def test_api_token_only_accepted(test_state):
+    app = create_app(handler=test_state, auth_token="", api_token="lan-secret")
+    with TestClient(app) as client:
+        ok = client.get("/health", headers={"Authorization": "Bearer lan-secret"})
+        assert ok.status_code == 200
+        missing = client.get("/health")
+        assert_http_error(missing, status_code=401, code="HTTP_401", message="Unauthorized")

@@ -322,6 +322,7 @@ export async function startPythonBackend(): Promise<void> {
     // Generate auth token and admin token for this backend session
     authToken = crypto.randomBytes(32).toString('base64url')
     adminToken = crypto.randomBytes(32).toString('base64url')
+    const apiToken = process.env.LTX_API_TOKEN || process.env.LTX_AUTH_TOKEN || ''
 
     pythonProcess = spawn(pythonPath, pythonArgs, {
       cwd: backendPath,
@@ -341,6 +342,7 @@ export async function startPythonBackend(): Promise<void> {
         ...(process.env.LTX_PORT ? { LTX_PORT: process.env.LTX_PORT } : {}),
         ...(process.env.LTX_BIND_HOST ? { LTX_BIND_HOST: process.env.LTX_BIND_HOST } : {}),
         LTX_AUTH_TOKEN: authToken,
+        ...(apiToken ? { LTX_API_TOKEN: apiToken } : {}),
         LTX_ADMIN_TOKEN: adminToken,
         LTX_LOG_FILE: getCurrentLogFilename(),
         LTX_APP_DATA_DIR: getAppDataDir(),
