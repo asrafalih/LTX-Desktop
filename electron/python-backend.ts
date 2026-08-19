@@ -337,8 +337,9 @@ export async function startPythonBackend(): Promise<void> {
         ...(process.platform === 'darwin' ? {
           PATH: `${path.dirname(pythonPath)}${path.delimiter}${process.env.PATH ?? ''}`,
         } : {}),
-        // Only pass LTX_PORT when the developer explicitly set it
+        // Only pass LTX_PORT / LTX_BIND_HOST when the developer explicitly set them
         ...(process.env.LTX_PORT ? { LTX_PORT: process.env.LTX_PORT } : {}),
+        ...(process.env.LTX_BIND_HOST ? { LTX_BIND_HOST: process.env.LTX_BIND_HOST } : {}),
         LTX_AUTH_TOKEN: authToken,
         LTX_ADMIN_TOKEN: adminToken,
         LTX_LOG_FILE: getCurrentLogFilename(),

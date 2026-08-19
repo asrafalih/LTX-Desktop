@@ -164,7 +164,7 @@ if use_sage_attention:
 # Constants & Paths
 # ============================================================
 
-from runtime_config.port_constant import PORT
+from runtime_config.port_constant import PORT, advertise_bind_host, resolve_bind_host
 
 
 def _get_device() -> torch.device:
@@ -341,9 +341,12 @@ if __name__ == "__main__":
     import uvicorn
 
     port = runtime_config.backend_port
+    bind_host = resolve_bind_host(os.environ.get("LTX_BIND_HOST"))
+    advertise_host = advertise_bind_host(bind_host)
     logger.info("=" * 60)
     logger.info("LTX-2 Video Generation Server (FastAPI + Uvicorn)")
     log_hardware_info()
+    logger.info("Bind host: %s", bind_host)
     logger.info("=" * 60)
 
     # Use our root logging config so uvicorn logs go to stdout (not its
@@ -364,7 +367,7 @@ if __name__ == "__main__":
         },
     }
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info", access_log=False, log_config=log_config)
+    config = uvicorn.Config(app, host=bind_host, port=port, log_level="info", access_log=False, log_config=log_config)
     server = uvicorn.Server(config)
 
     _orig_startup = server.startup
@@ -372,8 +375,9 @@ if __name__ == "__main__":
     async def _startup_with_ready_msg(sockets: object = None) -> None:
         await _orig_startup(sockets=sockets)  # type: ignore[arg-type]
         if server.started:
-            # Machine-parseable ready message — Electron matches this line
-            print(f"Server running on http://127.0.0.1:{port}", flush=True)
+            # Machine-parseable ready message — Electron matches this line.
+            # Advertise loopback when bound to 0.0.0.0 so the desktop app can probe it.
+            print(f"Server running on http://{advertise_host}:{port}", flush=True)
 
     server.startup = _startup_with_ready_msg  # type: ignore[assignment]
 
