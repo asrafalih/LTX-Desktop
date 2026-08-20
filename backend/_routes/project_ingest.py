@@ -23,5 +23,7 @@ def route_delete_project_ingest(
     job_id: str,
     handler: AppHandler = Depends(get_state_service),
 ) -> StatusResponse:
+    if handler.video_generation.cancel_queued(job_id):
+        return StatusResponse(status="ok")
     handler.project_ingest.delete_job(job_id)
     return StatusResponse(status="ok")

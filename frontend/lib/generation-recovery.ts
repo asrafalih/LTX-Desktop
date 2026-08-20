@@ -1,6 +1,12 @@
 import { ApiClient } from './api-client'
 import { GENERATION_RECOVERY_KEY, type GenerationRecoveryContext } from '../hooks/use-generation'
 import { builtinRecoveryImporters } from './generation-recovery-importers'
+import {
+  claimGenerationImport,
+  releaseGenerationImport,
+  getProjectIngestJobs,
+  isIngestJobKnown,
+} from './project-ingest-jobs'
 import type { Asset } from '../types/project-model'
 
 // Keyed the same way the recovery marker already is: undefined means the default "video" case
@@ -112,8 +118,25 @@ export async function checkAndConsumeRecovery(
   const observedId = progress.data.id
   const status = progress.data.status
 
-  if (observedId != null && ingestOwnedGenerationIds.has(observedId)) {
-    if (ctx.generationId == null && observedId !== ctx.baselineId) {
+  // Project-ingest owns named generate jobs end-to-end. Never recovery-import those, even
+  // after the queue entry is deleted / ownership bit cleared — a sticky Complete poll can
+  // otherwise race GenSpace's activeOwner gap (projectName gens never set videoPath).
+  const ingestManages = (
+    (observedId != null && (
+      ingestOwnedGenerationIds.has(observedId)
+      || isIngestJobKnown(observedId)
+    ))
+    || (ctx.generationId != null && (
+      ingestOwnedGenerationIds.has(ctx.generationId)
+      || isIngestJobKnown(ctx.generationId)
+    ))
+    // Any still-listed ingest job for this generation id (including video_path filled).
+    || getProjectIngestJobs().some(job =>
+      job.id === observedId || job.id === ctx.generationId
+    )
+  )
+  if (ingestManages) {
+    if (ctx.generationId == null && observedId != null && observedId !== ctx.baselineId) {
       ctx = { ...ctx, generationId: observedId }
       localStorage.setItem(GENERATION_RECOVERY_KEY, JSON.stringify(ctx))
     }
@@ -139,9 +162,21 @@ export async function checkAndConsumeRecovery(
   if (status === 'running') return // still going — check again next tick
 
   if (status === 'complete' && progress.data.result != null) {
+    const resultPath = typeof progress.data.result === 'string'
+      ? progress.data.result
+      : progress.data.result[0]
+    const importKeys = [
+      ...(ctx.generationId ? [`generation:${ctx.generationId}`] : []),
+      ...(resultPath ? [`result:${resultPath}`] : []),
+    ]
+    if (importKeys.length === 0 || !claimGenerationImport(importKeys)) {
+      localStorage.removeItem(GENERATION_RECOVERY_KEY)
+      return
+    }
     try {
       await importer(ctx, progress.data.result, api)
     } catch {
+      releaseGenerationImport(importKeys)
       // Leave the marker in place so the next tick (or that project's own mount effect) can
       // retry — a failed copy/import must not silently drop the result.
       return

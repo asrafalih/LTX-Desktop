@@ -372,7 +372,7 @@ export class ApiClient {
   })
 
   static generateVideo = makeEndpointClient('/api/generate', 'post', {
-    exactErrorStatuses: [402] as const,
+    exactErrorStatuses: [402, 429] as const,
   })
 
   static getGenerateVideoModelSpecs = makeEndpointClient('/api/generate/models-specs', 'get')

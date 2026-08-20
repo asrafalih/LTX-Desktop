@@ -46,6 +46,7 @@ from handlers.pipelines_handler import PipelinesHandler
 from handlers.project_ingest_handler import ProjectIngestHandler
 from handlers.prompt_enhancement_handler import PromptEnhancementHandler
 from handlers.text_handler import TextHandler
+from handlers.video_generate_queue import VideoGenerateQueue
 from runtime_config.model_download_specs import is_duration_head_ready, resolve_active_ltx_model_id
 from server_utils.media_validation import (
     normalize_optional_path,
@@ -113,6 +114,7 @@ class VideoGenerationHandler(StateHandlerBase):
         self._prompt_enhancement = prompt_enhancement_handler
         self._ltx_api_client = ltx_api_client
         self._project_ingest = project_ingest_handler
+        self._queue = VideoGenerateQueue(self._run_queued_job)
 
     def _resolve_prompt_enhancement(
         self, prompt: str, *, image_path: str | None
@@ -184,8 +186,35 @@ class VideoGenerationHandler(StateHandlerBase):
         if validation_error is not None:
             raise HTTPError(422, validation_error, code="INVALID_VIDEO_GENERATION_SPEC")
 
+        audio_path = normalize_optional_path(req.audioPath)
+        if audio_path and req.duration is None:
+            raise HTTPError(
+                422,
+                "Automatic duration cannot be combined with audio-to-video",
+                code="INVALID_VIDEO_GENERATION_SPEC",
+            )
+
+        generation_id = self._make_generation_id()
+        self._project_ingest.begin_from_generate(req, generation_id)
+        try:
+            return self._queue.submit(generation_id, req)
+        except HTTPError:
+            self._project_ingest.drop_if_incomplete(generation_id)
+            raise
+
+    def cancel_queued(self, job_id: str) -> bool:
+        cancelled = self._queue.cancel_queued(job_id)
+        if cancelled:
+            self._project_ingest.drop_if_incomplete(job_id)
+        return cancelled
+
+    def _run_queued_job(self, req: GenerateVideoRequest, generation_id: str) -> GenerateVideoResponse:
+        use_api_specs = should_video_generate_with_ltx_api(
+            force_api_generations=self.config.force_api_generations,
+            settings=self.state.app_settings,
+        )
         if use_api_specs:
-            return self._generate_forced_api(req)
+            return self._generate_forced_api(req, generation_id)
 
         with self._generation.reserved_generation_start():
 
@@ -195,13 +224,10 @@ class VideoGenerationHandler(StateHandlerBase):
 
             audio_path = normalize_optional_path(req.audioPath)
             if audio_path:
-                if duration is None:
-                    raise HTTPError(
-                        422,
-                        "Automatic duration cannot be combined with audio-to-video",
-                        code="INVALID_VIDEO_GENERATION_SPEC",
-                    )
-                return self._generate_a2v(req, duration, fps, audio_path=audio_path)
+                assert duration is not None
+                return self._generate_a2v(
+                    req, duration, fps, audio_path=audio_path, generation_id=generation_id
+                )
 
             logger.info("Resolution %s - using fast pipeline", resolution)
 
@@ -234,8 +260,6 @@ class VideoGenerationHandler(StateHandlerBase):
                 image = self._prepare_image(image_path, width, height)
                 logger.info("Image: %s -> %sx%s", image_path, width, height)
 
-            generation_id = self._make_generation_id()
-            self._project_ingest.begin_from_generate(req, generation_id)
             try:
                 seed = req.seed if req.seed is not None else self._resolve_seed()
                 loras = self._resolve_loras(req.loras)
@@ -396,7 +420,13 @@ class VideoGenerationHandler(StateHandlerBase):
                 os.unlink(temp_image_path)
 
     def _generate_a2v(
-        self, req: GenerateVideoRequest, duration: int, fps: int, *, audio_path: str
+        self,
+        req: GenerateVideoRequest,
+        duration: int,
+        fps: int,
+        *,
+        audio_path: str,
+        generation_id: str,
     ) -> GenerateVideoResponse:
         model_id = self._active_ltx_model_id()
         if model_id is None:
@@ -424,9 +454,6 @@ class VideoGenerationHandler(StateHandlerBase):
 
         seed = req.seed if req.seed is not None else self._resolve_seed()
         loras = self._resolve_loras(req.loras)
-
-        generation_id = self._make_generation_id()
-        self._project_ingest.begin_from_generate(req, generation_id)
 
         try:
             neg = req.negativePrompt if req.negativePrompt else self.config.default_negative_prompt
@@ -534,11 +561,11 @@ class VideoGenerationHandler(StateHandlerBase):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return self.config.outputs_dir / f"ltx2_video_{timestamp}_{self._make_generation_id()}.mp4"
 
-    def _generate_forced_api(self, req: GenerateVideoRequest) -> GenerateVideoResponse:
+    def _generate_forced_api(
+        self, req: GenerateVideoRequest, generation_id: str
+    ) -> GenerateVideoResponse:
         with self._generation.reserved_generation_start():
 
-            generation_id = self._make_generation_id()
-            self._project_ingest.begin_from_generate(req, generation_id)
             try:
                 self._generation.start_api_generation(generation_id)
 

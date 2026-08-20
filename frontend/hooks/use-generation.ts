@@ -3,6 +3,7 @@ import type { GenerationSettings } from '../components/SettingsPanel'
 import { ApiClient, type ApiRequestBodyOf, type ApiSuccessOf } from '../lib/api-client'
 import { createLocalGenerationError, type GenerationError } from '../lib/generation-errors'
 import { canCancelLocalJob, withGenerationActive } from '../lib/generation-active'
+import { getProjectIngestJobs, isIngestJobKnown } from '../lib/project-ingest-jobs'
 import { useAppSettings } from '../contexts/AppSettingsContext'
 
 const POLLING_INTERVAL_MS = 2000
@@ -21,6 +22,9 @@ export interface GenerationRecoveryContext {
   inputImageUrl?: string
   inputAudioUrl?: string
   genType?: 'image' | 'enhance'
+  // Written by useProjectIngestWatcher for projectName generates. Prompt lives on queue cards;
+  // GenSpace must not refill the textarea from this marker on remount.
+  fromIngest?: boolean
   // Frozen at marker write (job start) — same rule as hook canCancel. Lets Stop survive a
   // UI refresh before the first progress poll returns (local GPU can starve that poll).
   // Absent on older markers: treat as not cancellable until the poll reports it.
@@ -67,7 +71,7 @@ type GenerateVideoRequest = ApiRequestBodyOf<'generateVideo'>
 type GenerateImageRequest = ApiRequestBodyOf<'generateImage'>
 
 interface UseGenerationReturn extends GenerationState {
-  generate: (prompt: string, imagePath: string | null, settings: GenerationSettings, audioPath?: string | null) => Promise<void>
+  generate: (prompt: string, imagePath: string | null, settings: GenerationSettings, audioPath?: string | null, projectName?: string | null) => Promise<void>
   generateImage: (prompt: string, settings: GenerationSettings, editSource?: string | null) => Promise<void>
   cancel: () => void
   reset: () => void
@@ -169,9 +173,13 @@ export function useGeneration(): UseGenerationReturn {
       if (data.status === 'complete' && data.result != null) {
         const vp = typeof data.result === 'string' ? data.result : null
         const ips = Array.isArray(data.result) ? data.result : []
+        // Ingest-owned jobs must not set videoPath — GenSpace's completion effect would
+        // addAsset a second copy alongside the ingest watcher.
+        const ingestOwns = isIngestJobKnown(data.id)
+          || (vp != null && getProjectIngestJobs().some(job => job.video_path === vp))
         setState({
           isGenerating: false, isCancelling: false, canCancel: false, progress: 100, statusMessage: 'Complete!',
-          videoPath: vp, imagePath: ips[0] ?? null, imagePaths: ips, error: null,
+          videoPath: ingestOwns ? null : vp, imagePath: ips[0] ?? null, imagePaths: ips, error: null,
         })
         return 'complete'
       }
@@ -205,27 +213,30 @@ export function useGeneration(): UseGenerationReturn {
     return 'running'
   }, [])
 
+  const videoPostsRef = useRef(0)
+
   const generate = useCallback(async (
     prompt: string,
     imagePath: string | null,
     settings: GenerationSettings,
     audioPath?: string | null,
+    projectName?: string | null,
   ) => {
     const statusMsg = settings.model.startsWith('pro')
       ? 'Loading Pro model & generating...'
       : 'Generating video...'
 
-    setState({
+    videoPostsRef.current += 1
+    setState(prev => ({
+      ...prev,
       isGenerating: true,
       isCancelling: false,
       canCancel: canCancelLocalJob('video', shouldVideoGenerateWithLtxApi, shouldImageGenerateWithFalApi),
-      progress: 0,
-      statusMessage: statusMsg,
-      videoPath: null,
-      imagePath: null,
-      imagePaths: [],
       error: null,
-    })
+      ...(prev.isGenerating
+        ? {}
+        : { progress: 0, statusMessage: statusMsg, videoPath: null, imagePath: null, imagePaths: [] }),
+    }))
 
     let progressInterval: ReturnType<typeof setInterval> | null = null
     let shouldApplyPollingUpdates = true
@@ -252,6 +263,10 @@ export function useGeneration(): UseGenerationReturn {
         }
         if (settings.loras?.length) {
           body.loras = settings.loras.map(l => ({ ref: l.ref, scale: l.scale }))
+        }
+        const trimmedProjectName = projectName?.trim()
+        if (trimmedProjectName) {
+          body.projectName = trimmedProjectName
         }
 
         // Poll for real progress from backend with time-based interpolation
@@ -308,12 +323,13 @@ export function useGeneration(): UseGenerationReturn {
         // backend returns {status: "cancelled"} and the GPU job unwinds.
         const result = await ApiClient.generateVideo(body as unknown as GenerateVideoRequest)
         shouldApplyPollingUpdates = false
+        const stillBusy = videoPostsRef.current > 1
         if (!result.ok) {
           setState(prev => ({
             ...prev,
-            isGenerating: false,
-            isCancelling: false,
-            canCancel: false,
+            isGenerating: stillBusy,
+            isCancelling: stillBusy ? prev.isCancelling : false,
+            canCancel: stillBusy ? prev.canCancel : false,
             error: result,
           }))
           return
@@ -321,38 +337,41 @@ export function useGeneration(): UseGenerationReturn {
 
         const payload = result.data
         if (payload.status === 'complete') {
-          setState({
-            isGenerating: false,
-            isCancelling: false,
-            canCancel: false,
-            progress: 100,
-            statusMessage: 'Complete!',
-            videoPath: payload.video_path,
+          setState(prev => ({
+            ...prev,
+            isGenerating: stillBusy,
+            isCancelling: stillBusy ? prev.isCancelling : false,
+            canCancel: stillBusy ? prev.canCancel : false,
+            progress: stillBusy ? prev.progress : 100,
+            statusMessage: stillBusy ? prev.statusMessage : 'Complete!',
+            videoPath: trimmedProjectName ? prev.videoPath : payload.video_path,
             imagePath: null,
             imagePaths: [],
             error: null,
-          })
+          }))
         } else if (payload.status === 'cancelled') {
           setState(prev => ({
             ...prev,
-            isGenerating: false,
+            isGenerating: stillBusy,
             isCancelling: false,
-            canCancel: false,
-            statusMessage: 'Cancelled',
+            canCancel: stillBusy ? prev.canCancel : false,
+            statusMessage: stillBusy ? prev.statusMessage : 'Cancelled',
           }))
         } else {
           throw new Error('Unexpected response from /api/generate')
         }
 
       } catch (error) {
+        const stillBusy = videoPostsRef.current > 1
         setState(prev => ({
           ...prev,
-          isGenerating: false,
-          isCancelling: false,
-          canCancel: false,
+          isGenerating: stillBusy,
+          isCancelling: stillBusy ? prev.isCancelling : false,
+          canCancel: stillBusy ? prev.canCancel : false,
           error: createLocalGenerationError(error instanceof Error ? error.message : 'Unknown error'),
         }))
       } finally {
+        videoPostsRef.current = Math.max(0, videoPostsRef.current - 1)
         shouldApplyPollingUpdates = false
         if (progressInterval) {
           clearInterval(progressInterval)

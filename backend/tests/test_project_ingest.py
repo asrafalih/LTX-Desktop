@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
+import pytest
+
+from _routes._errors import HTTPError
 from api_types import GenerateVideoRequest
 from services.generation_interrupt import GenerationCancelledError
 from tests.http_error_assertions import assert_http_error
@@ -205,3 +209,109 @@ def test_failed_generate_drops_incomplete_ingest(
     r = client.post("/api/generate", json={**_T2V_JSON, "projectName": "Moon landing"})
     assert r.status_code == 500
     assert client.get("/api/project-ingest").json() == {"jobs": []}
+
+
+def test_second_generate_queues_instead_of_409(
+    client, test_state, fake_services, create_fake_model_files
+) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    pipeline = fake_services.fast_video_pipeline
+    pipeline.inference_steps = 8
+    pipeline.step_delay_s = 0.05
+
+    first: dict[str, object] = {}
+    second: dict[str, object] = {}
+    req_a = GenerateVideoRequest.model_validate({**_T2V_JSON, "prompt": "first", "projectName": "Moon"})
+    req_b = GenerateVideoRequest.model_validate({**_T2V_JSON, "prompt": "second", "projectName": "Moon"})
+
+    threading.Thread(target=lambda: first.update(value=test_state.video_generation.generate(req_a))).start()
+    assert pipeline.entered_inference.wait(timeout=5)
+
+    threading.Thread(target=lambda: second.update(value=test_state.video_generation.generate(req_b))).start()
+    jobs: list[dict[str, object]] = []
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        jobs = client.get("/api/project-ingest").json()["jobs"]
+        if len(jobs) == 2:
+            break
+        time.sleep(0.05)
+    assert len(jobs) == 2
+    assert all(job["video_path"] == "" for job in jobs)
+
+    deadline = time.time() + 15
+    while time.time() < deadline and ("value" not in first or "value" not in second):
+        time.sleep(0.05)
+    assert first["value"].status == "complete"  # type: ignore[union-attr]
+    assert second["value"].status == "complete"  # type: ignore[union-attr]
+    listed = client.get("/api/project-ingest").json()["jobs"]
+    assert len(listed) == 2
+    assert all(job["video_path"] for job in listed)
+
+
+def test_cancel_queued_generate_does_not_stop_runner(
+    client, test_state, fake_services, create_fake_model_files
+) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    pipeline = fake_services.fast_video_pipeline
+    pipeline.inference_steps = 12
+    pipeline.step_delay_s = 0.05
+
+    first: dict[str, object] = {}
+    second: dict[str, object] = {}
+    req_a = GenerateVideoRequest.model_validate({**_T2V_JSON, "prompt": "first", "projectName": "Moon"})
+    req_b = GenerateVideoRequest.model_validate({**_T2V_JSON, "prompt": "second", "projectName": "Moon"})
+
+    threading.Thread(target=lambda: first.update(value=test_state.video_generation.generate(req_a))).start()
+    assert pipeline.entered_inference.wait(timeout=5)
+    threading.Thread(target=lambda: second.update(value=test_state.video_generation.generate(req_b))).start()
+
+    jobs: list[dict[str, object]] = []
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        jobs = client.get("/api/project-ingest").json()["jobs"]
+        if len(jobs) == 2:
+            break
+        time.sleep(0.05)
+    assert len(jobs) == 2
+    running_id = client.get("/api/generation/progress").json()["id"]
+    queued = next(job for job in jobs if job["id"] != running_id)
+
+    deleted = client.delete(f"/api/project-ingest/{queued['id']}")
+    assert deleted.status_code == 200
+
+    deadline = time.time() + 15
+    while time.time() < deadline and ("value" not in first or "value" not in second):
+        time.sleep(0.05)
+    assert first["value"].status == "complete"  # type: ignore[union-attr]
+    assert second["value"].status == "cancelled"  # type: ignore[union-attr]
+
+
+def test_generate_queue_full_returns_429(test_state, fake_services, create_fake_model_files) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    pipeline = fake_services.fast_video_pipeline
+    pipeline.inference_steps = 20
+    pipeline.step_delay_s = 0.05
+    test_state.video_generation._queue.max_size = 1
+
+    first: dict[str, object] = {}
+    threading.Thread(
+        target=lambda: first.update(
+            value=test_state.video_generation.generate(GenerateVideoRequest.model_validate(_T2V_JSON))
+        )
+    ).start()
+    assert pipeline.entered_inference.wait(timeout=5)
+
+    with pytest.raises(HTTPError) as exc_info:
+        test_state.video_generation.generate(GenerateVideoRequest.model_validate(_T2V_JSON))
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.code == "VIDEO_GENERATE_QUEUE_FULL"
+
+    client_cancel = test_state.generation.cancel_generation()
+    assert client_cancel.status == "cancelling"
+    deadline = time.time() + 10
+    while time.time() < deadline and "value" not in first:
+        time.sleep(0.05)
+    assert first["value"].status == "cancelled"  # type: ignore[union-attr]

@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button'
 import { pathToFileUrl } from '../lib/file-url'
 import { subscribeWhileGenerationMayBeActive } from '../lib/generation-progress-poll'
 import { readGenerationRecoveryContext } from '../lib/generation-recovery'
+import { useProjectIngestJobs } from '../lib/project-ingest-jobs'
 import type { Project } from '../types/project-model'
 import { useProjectReferencesMigration } from '../hooks/useProjectReferencesMigration'
 
@@ -151,6 +152,7 @@ export function Home() {
   const { projectIds, getProject, createProject, deleteProject, renameProject } = useProjects()
   const { openProject } = useView()
   const generatingProjectId = useGeneratingProjectId()
+  const ingestJobs = useProjectIngestJobs()
   const { migrationStatus, migrateProjects } = useProjectReferencesMigration()
   const [isCreating, setIsCreating] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
@@ -303,7 +305,13 @@ export function Home() {
                 <ProjectCard
                   key={project.id}
                   project={project}
-                  isGenerating={project.id === generatingProjectId}
+                  isGenerating={
+                    project.id === generatingProjectId
+                    || ingestJobs.some(job =>
+                      !job.video_path
+                      && job.projectName.trim().toLowerCase() === project.name.trim().toLowerCase()
+                    )
+                  }
                   onOpen={() => openProject(project.id)}
                   onDelete={() => {
                     if (confirm(`Delete "${project.name}"?`)) {

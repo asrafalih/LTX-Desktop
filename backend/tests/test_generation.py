@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -299,11 +300,33 @@ class TestGenerate:
         assert r.status_code == 200
         assert fake_services.fast_video_pipeline.create_loras[-1] == [(lora_ref, 0.8)]
 
-    def test_already_running(self, client, test_state):
+    def test_already_running_queues_until_slot_frees(self, test_state, create_fake_model_files):
+        create_fake_model_files()
+        _enable_local_text_encoding(test_state)
         _fake_running_generation_state(test_state)
 
-        r = client.post("/api/generate", json=_T2V_JSON)
-        assert r.status_code == 409
+        result: dict[str, object] = {}
+
+        def run() -> None:
+            result["value"] = test_state.video_generation.generate(
+                GenerateVideoRequest.model_validate(_T2V_JSON)
+            )
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        deadline = time.time() + 2.0
+        running = None
+        while time.time() < deadline:
+            running = test_state.video_generation._queue._running
+            if running is not None:
+                break
+            time.sleep(0.02)
+        assert thread.is_alive()
+        assert running is not None
+        running.cancelled = True
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+        assert result["value"].status == "cancelled"  # type: ignore[union-attr]
 
     def test_i2v_nonexistent_image(self, client, test_state, create_fake_model_files):
         create_fake_model_files()
@@ -1699,7 +1722,7 @@ class TestGenerateCancel:
         assert r.status_code == 200
         assert r.json()["status"] == "complete"
 
-    def test_second_generate_409s_until_cancelled_job_unwinds(
+    def test_second_generate_waits_until_cancelled_job_unwinds(
         self, client, test_state, fake_services, create_fake_model_files
     ):
         create_fake_model_files()
@@ -1722,9 +1745,10 @@ class TestGenerateCancel:
         assert cancel.status_code == 200
         assert cancel.json()["status"] == "cancelling"
 
-        with pytest.raises(HTTPError) as exc_info:
-            test_state.video_generation.generate(GenerateVideoRequest.model_validate(_T2V_JSON))
-        assert exc_info.value.status_code == 409
+        pipeline.inference_steps = 1
+        pipeline.step_delay_s = 0
+        second = test_state.video_generation.generate(GenerateVideoRequest.model_validate(_T2V_JSON))
+        assert second.status == "complete"
 
         thread.join(timeout=8.0)
         assert not thread.is_alive()
