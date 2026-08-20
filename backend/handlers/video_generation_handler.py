@@ -20,6 +20,7 @@ from api_types import (
     GenerateVideoCancelledResponse,
     GenerateVideoCompleteResponse,
     GenerateVideoModelsSpecsResponse,
+    GenerateVideoQueuedResponse,
     GenerateVideoRequest,
     GenerateVideoResponse,
     ImageConditioningInput,
@@ -43,7 +44,7 @@ from handlers.base import StateHandlerBase
 from server_utils.heartbeat import log_heartbeat
 from handlers.generation_handler import GenerationHandler
 from handlers.pipelines_handler import PipelinesHandler
-from handlers.project_ingest_handler import ProjectIngestHandler
+from handlers.project_ingest_handler import ProjectIngestHandler, normalize_project_name
 from handlers.prompt_enhancement_handler import PromptEnhancementHandler
 from handlers.text_handler import TextHandler
 from handlers.video_generate_queue import VideoGenerateQueue
@@ -197,6 +198,12 @@ class VideoGenerationHandler(StateHandlerBase):
         generation_id = self._make_generation_id()
         self._project_ingest.begin_from_generate(req, generation_id)
         try:
+            # projectName → non-blocking enqueue so each desktop Generate frees the HTTP
+            # connection immediately (browsers only allow ~6 concurrent connections/host).
+            # Curl without projectName still blocks until the video is ready.
+            if normalize_project_name(req.projectName) is not None:
+                self._queue.enqueue(generation_id, req)
+                return GenerateVideoQueuedResponse(status="queued", id=generation_id)
             return self._queue.submit(generation_id, req)
         except HTTPError:
             self._project_ingest.drop_if_incomplete(generation_id)

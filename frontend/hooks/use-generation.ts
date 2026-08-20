@@ -111,7 +111,7 @@ function getImageDimensions(settings: GenerationSettings): { width: number; heig
 }
 
 // Map phase to user-friendly message
-function getPhaseMessage(phase: string): string {
+export function getPhaseMessage(phase: string): string {
   switch (phase) {
     case 'validating_request':
       return 'Validating request...'
@@ -316,7 +316,12 @@ export function useGeneration(): UseGenerationReturn {
           })
         }
 
-        progressInterval = setInterval(pollProgress, 500)
+        // Queued projectName generates: N concurrent POSTs each polling here fought over the
+        // same progress state (bar jumped up/down). GenSpace drives queue-card progress from
+        // subscribeToGenerationProgress instead.
+        if (!trimmedProjectName) {
+          progressInterval = setInterval(pollProgress, 500)
+        }
 
         // Start generation (HTTP POST - synchronous, returns when done)
         // Do not abort this POST: liveness suppression stays up until the
@@ -336,7 +341,16 @@ export function useGeneration(): UseGenerationReturn {
         }
 
         const payload = result.data
-        if (payload.status === 'complete') {
+        if (payload.status === 'queued') {
+          // Non-blocking ingest enqueue — completion is owned by the ingest watcher.
+          setState(prev => ({
+            ...prev,
+            isGenerating: stillBusy,
+            isCancelling: stillBusy ? prev.isCancelling : false,
+            canCancel: stillBusy ? prev.canCancel : false,
+            error: null,
+          }))
+        } else if (payload.status === 'complete') {
           setState(prev => ({
             ...prev,
             isGenerating: stillBusy,

@@ -166,7 +166,16 @@ class GenerateVideoCancelledResponse(BaseModel):
     status: Literal["cancelled"]
 
 
-GenerateVideoResponse: TypeAlias = GenerateVideoCompleteResponse | GenerateVideoCancelledResponse
+class GenerateVideoQueuedResponse(BaseModel):
+    """Returned when projectName ingest enqueues without blocking the HTTP request."""
+
+    status: Literal["queued"]
+    id: str
+
+
+GenerateVideoResponse: TypeAlias = (
+    GenerateVideoCompleteResponse | GenerateVideoCancelledResponse | GenerateVideoQueuedResponse
+)
 
 
 class GenerateImageCompleteResponse(BaseModel):

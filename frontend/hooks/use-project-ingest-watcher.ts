@@ -12,6 +12,7 @@ import {
   claimGenerationImport,
   releaseGenerationImport,
   setProjectIngestJobs,
+  takeIngestJobDurationSec,
 } from '../lib/project-ingest-jobs'
 import type { VideoGenerationPipeline } from '../lib/video-generation-model-specs'
 import type { components } from '../generated/backend-openapi'
@@ -19,7 +20,7 @@ import { GENERATION_RECOVERY_KEY, type GenerationRecoveryContext } from './use-g
 
 type ProjectIngestJob = components['schemas']['ProjectIngestJob']
 
-const POLL_MS = 2500
+const POLL_MS = 1000
 
 function settingsFromJob(job: ProjectIngestJob): GenerationSettings {
   return {
@@ -141,6 +142,7 @@ export function useProjectIngestWatcher(): void {
           return false
         }
         const duration = job.duration ?? undefined
+        const generationDurationSec = takeIngestJobDurationSec(job.id, job.createdAt)
         addAssetRef.current(projectId, {
           type: 'video',
           path: copied.path,
@@ -160,6 +162,7 @@ export function useProjectIngestWatcher(): void {
             fps: job.fps,
             audio: job.audio,
             cameraMotion: 'none',
+            ...(generationDurationSec != null ? { generationDurationSec } : {}),
           },
           takes: [{
             path: copied.path,

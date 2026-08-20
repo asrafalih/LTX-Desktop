@@ -8,6 +8,8 @@ interface TooltipProps {
   /** Which side of the trigger the tooltip appears on. Default: 'top' */
   side?: 'top' | 'bottom' | 'left' | 'right'
   className?: string
+  /** Allow multi-line wrapped content (e.g. full prompts). */
+  wrap?: boolean
 }
 
 const DELAY_MS = 500
@@ -18,7 +20,7 @@ const GAP_PX = 6
  * Renders via a portal into document.body so it is never clipped
  * by overflow-hidden ancestors.
  */
-export function Tooltip({ content, children, side = 'top', className }: TooltipProps) {
+export function Tooltip({ content, children, side = 'top', className, wrap = false }: TooltipProps) {
   const [visible, setVisible] = useState(false)
   const [style, setStyle] = useState<React.CSSProperties>({})
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -63,7 +65,12 @@ export function Tooltip({ content, children, side = 'top', className }: TooltipP
       {children}
       {visible && ReactDOM.createPortal(
         <div
-          className="fixed z-[99999] px-2.5 py-1.5 bg-white text-zinc-800 text-xs font-medium rounded-md shadow-md whitespace-nowrap pointer-events-none select-none"
+          className={cn(
+            'fixed z-[99999] px-2.5 py-1.5 bg-white text-zinc-800 text-xs font-medium rounded-md shadow-md pointer-events-none select-none',
+            wrap
+              ? 'max-w-sm whitespace-pre-wrap break-words text-left font-normal'
+              : 'whitespace-nowrap',
+          )}
           style={style}
         >
           {content}

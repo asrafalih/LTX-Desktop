@@ -85,6 +85,8 @@ export const generationParamsSchema = z.object({
     name: z.string(),
     scale: z.number(),
   })).optional(),
+  // Wall-clock seconds from generation start to asset import (optional; older assets omit it).
+  generationDurationSec: z.number().optional(),
 })
 
 export const assetTakeSchema = z.object({

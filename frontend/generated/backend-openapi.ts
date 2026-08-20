@@ -1131,6 +1131,19 @@ export interface components {
             /** Local Models */
             local_models: components["schemas"]["LTXVideoGenerationModelSpecItem"][];
         };
+        /**
+         * GenerateVideoQueuedResponse
+         * @description Returned when projectName ingest enqueues without blocking the HTTP request.
+         */
+        GenerateVideoQueuedResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "queued";
+        };
         /** GenerateVideoRequest */
         GenerateVideoRequest: {
             /**
@@ -2556,7 +2569,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GenerateVideoCompleteResponse"] | components["schemas"]["GenerateVideoCancelledResponse"];
+                    "application/json": components["schemas"]["GenerateVideoCompleteResponse"] | components["schemas"]["GenerateVideoCancelledResponse"] | components["schemas"]["GenerateVideoQueuedResponse"];
                 };
             };
             /** @description LTX API credits are insufficient for the requested generation */

@@ -50,12 +50,14 @@ class ProjectIngestHandler:
 
     def list_jobs(self) -> ProjectIngestListResponse:
         jobs: list[ProjectIngestJob] = []
-        for path in sorted(self._dir.glob("*.json")):
+        for path in self._dir.glob("*.json"):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 jobs.append(ProjectIngestJob.model_validate(payload))
             except (OSError, json.JSONDecodeError, ValueError):
                 logger.warning("Skipping unreadable ingest job file: %s", path.name)
+        # FIFO by enqueue time — never by job-id filename (random hex sorts wrong).
+        jobs.sort(key=lambda job: (job.createdAt, job.id))
         return ProjectIngestListResponse(jobs=jobs)
 
     def delete_job(self, job_id: str) -> None:
@@ -73,6 +75,16 @@ class ProjectIngestHandler:
             logger.warning("Skipping project ingest with invalid job id")
             return
         duration = None if req.duration is None else float(req.duration)
+        created_at = time.time()
+        existing_path = self._job_path(job_id)
+        if existing_path.is_file():
+            try:
+                existing = ProjectIngestJob.model_validate(
+                    json.loads(existing_path.read_text(encoding="utf-8"))
+                )
+                created_at = existing.createdAt
+            except (OSError, json.JSONDecodeError, ValueError):
+                pass
         job = ProjectIngestJob(
             id=job_id,
             projectName=project_name,
@@ -83,9 +95,9 @@ class ProjectIngestHandler:
             duration=duration,
             fps=int(req.fps),
             audio=req.audio,
-            createdAt=time.time(),
+            createdAt=created_at,
         )
-        self._job_path(job_id).write_text(job.model_dump_json(), encoding="utf-8")
+        existing_path.write_text(job.model_dump_json(), encoding="utf-8")
 
     def _resolve_job_file(self, job_id: str) -> Path:
         if not _JOB_ID_PATTERN.fullmatch(job_id):

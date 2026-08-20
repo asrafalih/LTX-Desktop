@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
-  Trash2, Download, Image, Video, X,
+  Trash2, Download, Image, Video, X, Info,
   Heart, Film, Volume2, VolumeX, Sparkles, Sparkle,
   Clock, Monitor, ChevronUp, Scissors, Music, Undo2, Redo2, Loader2,
   MoveHorizontal, Wand2, Square
@@ -8,10 +8,20 @@ import {
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
 import { useAppSettings } from '../contexts/AppSettingsContext'
-import { useGeneration, GENERATION_RECOVERY_KEY, type GenerationRecoveryContext } from '../hooks/use-generation'
+import { useGeneration, GENERATION_RECOVERY_KEY, getPhaseMessage, type GenerationRecoveryContext } from '../hooks/use-generation'
 import { setActiveGenerationOwner, hasValidBaselineId } from '../lib/generation-recovery'
-import { useProjectIngestJobs, claimGenerationImport, releaseGenerationImport, isIngestJobKnown, type ProjectIngestJob } from '../lib/project-ingest-jobs'
-import { subscribeToGenerationProgress, subscribeWhileGenerationMayBeActive } from '../lib/generation-progress-poll'
+import {
+  useProjectIngestJobs,
+  claimGenerationImport,
+  releaseGenerationImport,
+  refreshProjectIngestJobs,
+  isIngestJobKnown,
+  markIngestJobRunStarted,
+  formatGenerationDuration,
+  type ProjectIngestJob,
+} from '../lib/project-ingest-jobs'
+import { Tooltip } from '../components/ui/tooltip'
+import { subscribeWhileGenerationMayBeActive } from '../lib/generation-progress-poll'
 import { withGenerationActive, canCancelLocalJob } from '../lib/generation-active'
 import { useVideoGenerationModelSpecs } from '../hooks/use-video-generation-model-specs'
 import { createLocalGenerationError, type GenerationError } from '../lib/generation-errors'
@@ -98,6 +108,8 @@ function AssetCard({
   const [isMuted, setIsMuted] = useState(true)
   const [volume, setVolume] = useState(0.5)
   const isFavorite = asset.favorite || false
+  const promptText = (asset.prompt || asset.generationParams?.prompt || '').trim()
+  const generationDurationSec = asset.generationParams?.generationDurationSec
 
   useEffect(() => {
     if (asset.type !== 'video') return
@@ -251,6 +263,18 @@ function AssetCard({
           </div>
           
           <div className="flex items-center gap-1.5">
+            {promptText !== '' && (
+              <Tooltip content={promptText} side="bottom" wrap>
+                <button
+                  type="button"
+                  onClick={(e) => e.stopPropagation()}
+                  className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors"
+                  aria-label="Show prompt"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            )}
             <button
               onClick={handleDownload}
               className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors"
@@ -268,6 +292,12 @@ function AssetCard({
               <div className="px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs font-mono">
                 {formatTime(currentTime)}
               </div>
+              {generationDurationSec != null && (
+                <div className="px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1">
+                  <Clock className="h-3 w-3 opacity-80" />
+                  Generated in {formatGenerationDuration(generationDurationSec)}
+                </div>
+              )}
               <div className="flex items-center gap-1.5 rounded-lg bg-black/40 backdrop-blur-md pl-1.5 pr-2 py-1">
                 <button
                   onClick={(e) => { e.stopPropagation(); setIsMuted(!isMuted) }}
@@ -299,6 +329,12 @@ function AssetCard({
                 />
               </div>
             </div>
+          </div>
+        )}
+        {asset.type === 'image' && generationDurationSec != null && (
+          <div className="absolute bottom-2 left-2 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1">
+            <Clock className="h-3 w-3 opacity-80" />
+            Generated in {formatGenerationDuration(generationDurationSec)}
           </div>
         )}
 
@@ -1231,11 +1267,13 @@ export function GenSpace() {
   const currentProjectId = activeProject?.id ?? null
   const ingestJobs = useProjectIngestJobs()
   const [progressGenerationId, setProgressGenerationId] = useState<string | null>(null)
-  useEffect(() => {
-    return subscribeToGenerationProgress(result => {
-      if (result.ok) setProgressGenerationId(result.data.id ?? null)
-    })
-  }, [])
+  const [progressStatus, setProgressStatus] = useState<string | null>(null)
+  const [queueProgress, setQueueProgress] = useState(0)
+  const [queueStatusMessage, setQueueStatusMessage] = useState('')
+  const queueInferenceStartRef = useRef(0)
+  const queueLastPhaseRef = useRef('')
+  const queueTrackedIdRef = useRef<string | null>(null)
+  const hasIngestCards = ingestJobs.length > 0
   const { shouldVideoGenerateWithLtxApi, shouldImageGenerateWithFalApi, forceApiGenerations, settings: appSettings } = useAppSettings()
   const {
     modelSpecs: videoGenerationModelSpecsResponse,
@@ -1317,6 +1355,69 @@ export function GenSpace() {
     cancel,
     canCancel: generationCanCancel,
   } = useGeneration()
+
+  // Single progress poll for queue cards (projectName generates skip useGeneration's per-POST
+  // pollers, which previously fought over one shared bar and made it jump up/down).
+  useEffect(() => {
+    if (!isGenerating && !hasIngestCards) return
+    let cancelled = false
+
+    const applyProgress = (data: {
+      id?: string | null
+      status: string
+      phase: string
+      progress: number
+    }) => {
+      const id = data.id ?? null
+      setProgressGenerationId(id)
+      setProgressStatus(data.status)
+
+      if (data.status !== 'running') {
+        queueLastPhaseRef.current = data.phase
+        return
+      }
+
+      if (id != null && id !== queueTrackedIdRef.current) {
+        queueTrackedIdRef.current = id
+        queueInferenceStartRef.current = 0
+        queueLastPhaseRef.current = ''
+        setQueueProgress(0)
+        setQueueStatusMessage(getPhaseMessage(data.phase))
+      }
+      if (id != null) markIngestJobRunStarted(id)
+
+      let displayProgress = data.progress
+      let nextStatusMessage = getPhaseMessage(data.phase)
+      if (data.phase === 'inference') {
+        if (queueLastPhaseRef.current !== 'inference') {
+          queueInferenceStartRef.current = Date.now()
+        }
+        const elapsed = (Date.now() - queueInferenceStartRef.current) / 1000
+        const inferenceProgress = Math.min(elapsed / 45, 0.95)
+        displayProgress = 15 + Math.floor(inferenceProgress * 80)
+      }
+      if (data.phase === 'complete') {
+        displayProgress = 95
+        nextStatusMessage = 'Finalizing...'
+      }
+      queueLastPhaseRef.current = data.phase
+      setQueueProgress(displayProgress)
+      setQueueStatusMessage(nextStatusMessage)
+    }
+
+    const tick = async () => {
+      const result = await ApiClient.getGenerationProgress()
+      if (cancelled || !result.ok) return
+      applyProgress(result.data)
+    }
+
+    void tick()
+    const timer = window.setInterval(() => { void tick() }, 500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [isGenerating, hasIngestCards])
 
   // Locally installed LoRAs are only usable in local generation mode.
   const isLocalMode = !shouldVideoGenerateWithLtxApi
@@ -2640,6 +2741,10 @@ export function GenSpace() {
       generate(prompt, imagePath, genSettings, audioPath, activeProject?.name)
       lastVideoEnqueueRef.current = { prompt, at: Date.now() }
       setPrompt('')
+      // Don't wait for the 1s ingest poll — refresh so the new card appears in FIFO order ASAP.
+      void refreshProjectIngestJobs()
+      window.setTimeout(() => { void refreshProjectIngestJobs() }, 200)
+      window.setTimeout(() => { void refreshProjectIngestJobs() }, 800)
       } finally {
         videoEnqueueLockRef.current = false
       }
@@ -2762,20 +2867,30 @@ export function GenSpace() {
   const projectIngestJobs = ingestJobs.filter(job =>
     job.projectName.trim().toLowerCase() === projectNeedle
   )
+  // ingestJobs is already FIFO by createdAt; keep a named pending list for running detection.
   const pendingIngestJobs = projectIngestJobs.filter(job => !job.video_path)
   const isIngestJobRunning = useCallback((job: ProjectIngestJob): boolean => {
     if (job.video_path) return false
-    if (progressGenerationId === job.id) return true
+    // Authoritative: backend progress id matches this ingest job and is still running.
+    if (progressStatus === 'running' && progressGenerationId === job.id) return true
     if (progressGenerationId != null && pendingIngestJobs.some(j => j.id === progressGenerationId)) {
       return false
     }
-    if (isGenerating && pendingIngestJobs[0]?.id === job.id) return true
+    // Starting gap (no id yet) or sticky complete of a finished job — oldest pending is next.
+    if (isGenerating && pendingIngestJobs[0]?.id === job.id) {
+      if (progressStatus === 'running' && progressGenerationId != null) return false
+      return true
+    }
     return false
-  }, [progressGenerationId, pendingIngestJobs, isGenerating])
+  }, [progressGenerationId, progressStatus, pendingIngestJobs, isGenerating])
   const showGeneratingTile = projectIngestJobs.length === 0
     && isGenerating
     && (mode === 'image' || mode === 'video')
     && shouldShowGeneratingTile(typeFilter, mode)
+  const cardStatusMessage = projectIngestJobs.length > 0
+    ? (queueStatusMessage || 'Generating...')
+    : (statusMessage || 'Generating...')
+  const cardProgress = projectIngestJobs.length > 0 ? queueProgress : progress
 
   // Navigation for the asset preview modal
   const selectedIndex = selectedAsset ? filteredAssets.findIndex(a => a.id === selectedAsset.id) : -1
@@ -2883,6 +2998,7 @@ export function GenSpace() {
               {mode === 'video' && projectIngestJobs.map(job => {
                 const isImporting = Boolean(job.video_path)
                 const isRunning = !isImporting && isIngestJobRunning(job)
+                const promptText = job.prompt.trim()
                 return (
                   <div key={job.id} className="group relative rounded-xl overflow-hidden bg-zinc-800 aspect-video">
                     <div className="absolute inset-0 flex flex-col items-center justify-center px-3">
@@ -2906,32 +3022,42 @@ export function GenSpace() {
                               <Sparkles className="h-6 w-6 text-violet-400" />
                             </div>
                           </div>
-                          <p className="text-sm text-zinc-400">{statusMessage || 'Generating...'}</p>
-                          {progress > 0 && (
+                          <p className="text-sm text-zinc-400">{cardStatusMessage}</p>
+                          {cardProgress > 0 && (
                             <div className="w-32 h-1 bg-zinc-800 rounded-full mt-2 overflow-hidden">
-                              <div className="h-full bg-violet-500 transition-all" style={{ width: `${progress}%` }} />
+                              <div className="h-full bg-violet-500 transition-all" style={{ width: `${cardProgress}%` }} />
                             </div>
                           )}
                         </>
                       ) : (
-                        <>
-                          <p className="text-sm font-medium text-zinc-300 mb-1">Queued</p>
-                          <p className="text-xs text-zinc-500 line-clamp-3 text-center">{job.prompt}</p>
-                        </>
+                        <p className="text-sm font-medium text-zinc-300">Queued</p>
                       )}
                     </div>
-                    {job.prompt.trim() !== '' && (
-                      <div className="absolute inset-0 z-10 overflow-y-auto bg-black/85 p-3 pb-8 opacity-0 transition-opacity group-hover:opacity-100">
-                        <p className="text-xs text-zinc-100 whitespace-pre-wrap break-words">{job.prompt}</p>
+                    {promptText !== '' && (
+                      <div className="absolute top-2 right-2 z-20">
+                        <Tooltip content={promptText} side="bottom" wrap>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white/80 hover:bg-black/60 hover:text-white transition-colors"
+                            aria-label="Show prompt"
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
                       </div>
                     )}
                     {!isRunning && !isImporting && (
                       <button
                         type="button"
-                        className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2 text-xs text-zinc-400 hover:text-white"
-                        onClick={() => { void ApiClient.deleteProjectIngest(job.id) }}
+                        className="absolute bottom-2 right-2 z-20 p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white/70 hover:bg-red-500/80 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
+                        aria-label="Remove from queue"
+                        onClick={() => {
+                          void ApiClient.deleteProjectIngest(job.id).then(() => {
+                            void refreshProjectIngestJobs()
+                          })
+                        }}
                       >
-                        Remove
+                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
@@ -2955,8 +3081,16 @@ export function GenSpace() {
                     )}
                   </div>
                   {lastPrompt.trim() !== '' && (
-                    <div className="absolute inset-0 z-10 overflow-y-auto bg-black/85 p-3 opacity-0 transition-opacity group-hover:opacity-100">
-                      <p className="text-xs text-zinc-100 whitespace-pre-wrap break-words">{lastPrompt}</p>
+                    <div className="absolute top-2 right-2 z-20">
+                      <Tooltip content={lastPrompt} side="bottom" wrap>
+                        <button
+                          type="button"
+                          className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white/80 hover:bg-black/60 hover:text-white transition-colors"
+                          aria-label="Show prompt"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      </Tooltip>
                     </div>
                   )}
                 </div>

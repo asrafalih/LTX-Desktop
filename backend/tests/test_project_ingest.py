@@ -78,25 +78,32 @@ def test_generate_with_project_name_enqueues_and_delete_consumes(
         },
     )
     assert r.status_code == 200
-    video_path = r.json()["video_path"]
-    assert Path(video_path).exists()
+    assert r.json()["status"] == "queued"
+    job_id = r.json()["id"]
+    assert job_id
 
-    listed = client.get("/api/project-ingest")
-    assert listed.status_code == 200
-    jobs = listed.json()["jobs"]
-    assert len(jobs) == 1
-    job = jobs[0]
+    deadline = time.time() + 15
+    job: dict[str, object] | None = None
+    while time.time() < deadline:
+        listed = client.get("/api/project-ingest")
+        assert listed.status_code == 200
+        jobs = listed.json()["jobs"]
+        match = next((j for j in jobs if j["id"] == job_id), None)
+        if match and match["video_path"]:
+            job = match
+            break
+        time.sleep(0.05)
+    assert job is not None
     assert job["projectName"] == "Moon landing"
-    assert job["video_path"] == video_path
     assert job["prompt"] == "moon landing"
     assert job["model"] == "fast"
     assert job["resolution"] == "1080p"
     assert job["duration"] == 5
     assert job["fps"] == 24
     assert job["audio"] is False
-    assert job["id"]
+    assert Path(str(job["video_path"])).exists()
 
-    deleted = client.delete(f"/api/project-ingest/{job['id']}")
+    deleted = client.delete(f"/api/project-ingest/{job_id}")
     assert deleted.status_code == 200
     assert deleted.json() == {"status": "ok"}
     assert client.get("/api/project-ingest").json() == {"jobs": []}
@@ -147,6 +154,32 @@ def test_drop_if_incomplete_removes_running_job(test_state) -> None:
     assert ingest.list_jobs().jobs == []
 
 
+def test_list_jobs_orders_by_created_at_fifo(test_state) -> None:
+    ingest = test_state.project_ingest
+    ingest.begin_from_generate(_named_req(prompt="first"), "zzzz1111")
+    time.sleep(0.02)
+    ingest.begin_from_generate(_named_req(prompt="second"), "aaaa2222")
+    time.sleep(0.02)
+    ingest.begin_from_generate(_named_req(prompt="third"), "mmmm3333")
+    jobs = ingest.list_jobs().jobs
+    assert [job.prompt for job in jobs] == ["first", "second", "third"]
+    assert [job.id for job in jobs] == ["zzzz1111", "aaaa2222", "mmmm3333"]
+
+
+def test_complete_preserves_created_at_order(test_state) -> None:
+    ingest = test_state.project_ingest
+    ingest.begin_from_generate(_named_req(prompt="first"), "zzzz1111")
+    time.sleep(0.02)
+    ingest.begin_from_generate(_named_req(prompt="second"), "aaaa2222")
+    first_created = ingest.list_jobs().jobs[0].createdAt
+    ingest.enqueue_from_generate(_named_req(prompt="first"), "/tmp/first.mp4", "zzzz1111")
+    jobs = ingest.list_jobs().jobs
+    assert jobs[0].id == "zzzz1111"
+    assert jobs[0].createdAt == first_created
+    assert jobs[0].video_path == "/tmp/first.mp4"
+    assert jobs[1].prompt == "second"
+
+
 def test_begin_without_project_name_writes_nothing(test_state) -> None:
     ingest = test_state.project_ingest
     ingest.begin_from_generate(_named_req(projectName=None), "abc12345")
@@ -163,24 +196,25 @@ def test_in_flight_generate_lists_ingest_without_video_path(
     pipeline.inference_steps = 8
     pipeline.step_delay_s = 0.05
 
-    req = GenerateVideoRequest.model_validate({**_T2V_JSON, "projectName": "Moon landing"})
-    holder: dict[str, object] = {}
+    r = client.post("/api/generate", json={**_T2V_JSON, "projectName": "Moon landing"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "queued"
+    job_id = r.json()["id"]
 
-    def run() -> None:
-        holder["result"] = test_state.video_generation.generate(req)
-
-    thread = threading.Thread(target=run)
-    thread.start()
     assert pipeline.entered_inference.wait(timeout=5)
 
     jobs = client.get("/api/project-ingest").json()["jobs"]
     assert len(jobs) == 1
+    assert jobs[0]["id"] == job_id
     assert jobs[0]["projectName"] == "Moon landing"
     assert jobs[0]["video_path"] == ""
-    assert jobs[0]["id"]
 
-    thread.join(timeout=10)
-    assert not thread.is_alive()
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        listed = client.get("/api/project-ingest").json()["jobs"]
+        if listed and listed[0]["video_path"]:
+            break
+        time.sleep(0.05)
     listed = client.get("/api/project-ingest").json()["jobs"]
     assert len(listed) == 1
     assert listed[0]["video_path"]
@@ -195,7 +229,13 @@ def test_cancelled_generate_drops_incomplete_ingest(
 
     r = client.post("/api/generate", json={**_T2V_JSON, "projectName": "Moon landing"})
     assert r.status_code == 200
-    assert r.json()["status"] == "cancelled"
+    assert r.json()["status"] == "queued"
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if client.get("/api/project-ingest").json()["jobs"] == []:
+            break
+        time.sleep(0.05)
     assert client.get("/api/project-ingest").json() == {"jobs": []}
 
 
@@ -207,7 +247,14 @@ def test_failed_generate_drops_incomplete_ingest(
     fake_services.fast_video_pipeline.raise_on_generate = RuntimeError("GPU OOM")
 
     r = client.post("/api/generate", json={**_T2V_JSON, "projectName": "Moon landing"})
-    assert r.status_code == 500
+    assert r.status_code == 200
+    assert r.json()["status"] == "queued"
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if client.get("/api/project-ingest").json()["jobs"] == []:
+            break
+        time.sleep(0.05)
     assert client.get("/api/project-ingest").json() == {"jobs": []}
 
 
@@ -220,15 +267,15 @@ def test_second_generate_queues_instead_of_409(
     pipeline.inference_steps = 8
     pipeline.step_delay_s = 0.05
 
-    first: dict[str, object] = {}
-    second: dict[str, object] = {}
-    req_a = GenerateVideoRequest.model_validate({**_T2V_JSON, "prompt": "first", "projectName": "Moon"})
-    req_b = GenerateVideoRequest.model_validate({**_T2V_JSON, "prompt": "second", "projectName": "Moon"})
-
-    threading.Thread(target=lambda: first.update(value=test_state.video_generation.generate(req_a))).start()
+    r1 = client.post("/api/generate", json={**_T2V_JSON, "prompt": "first", "projectName": "Moon"})
+    assert r1.status_code == 200
+    assert r1.json()["status"] == "queued"
     assert pipeline.entered_inference.wait(timeout=5)
 
-    threading.Thread(target=lambda: second.update(value=test_state.video_generation.generate(req_b))).start()
+    r2 = client.post("/api/generate", json={**_T2V_JSON, "prompt": "second", "projectName": "Moon"})
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "queued"
+
     jobs: list[dict[str, object]] = []
     deadline = time.time() + 5
     while time.time() < deadline:
@@ -237,13 +284,15 @@ def test_second_generate_queues_instead_of_409(
             break
         time.sleep(0.05)
     assert len(jobs) == 2
+    assert {job["prompt"] for job in jobs} == {"first", "second"}
     assert all(job["video_path"] == "" for job in jobs)
 
-    deadline = time.time() + 15
-    while time.time() < deadline and ("value" not in first or "value" not in second):
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        listed = client.get("/api/project-ingest").json()["jobs"]
+        if len(listed) == 2 and all(job["video_path"] for job in listed):
+            break
         time.sleep(0.05)
-    assert first["value"].status == "complete"  # type: ignore[union-attr]
-    assert second["value"].status == "complete"  # type: ignore[union-attr]
     listed = client.get("/api/project-ingest").json()["jobs"]
     assert len(listed) == 2
     assert all(job["video_path"] for job in listed)
@@ -258,14 +307,15 @@ def test_cancel_queued_generate_does_not_stop_runner(
     pipeline.inference_steps = 12
     pipeline.step_delay_s = 0.05
 
-    first: dict[str, object] = {}
-    second: dict[str, object] = {}
-    req_a = GenerateVideoRequest.model_validate({**_T2V_JSON, "prompt": "first", "projectName": "Moon"})
-    req_b = GenerateVideoRequest.model_validate({**_T2V_JSON, "prompt": "second", "projectName": "Moon"})
-
-    threading.Thread(target=lambda: first.update(value=test_state.video_generation.generate(req_a))).start()
+    r1 = client.post("/api/generate", json={**_T2V_JSON, "prompt": "first", "projectName": "Moon"})
+    assert r1.status_code == 200
+    assert r1.json()["status"] == "queued"
     assert pipeline.entered_inference.wait(timeout=5)
-    threading.Thread(target=lambda: second.update(value=test_state.video_generation.generate(req_b))).start()
+
+    r2 = client.post("/api/generate", json={**_T2V_JSON, "prompt": "second", "projectName": "Moon"})
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "queued"
+    queued_id = r2.json()["id"]
 
     jobs: list[dict[str, object]] = []
     deadline = time.time() + 5
@@ -275,17 +325,60 @@ def test_cancel_queued_generate_does_not_stop_runner(
             break
         time.sleep(0.05)
     assert len(jobs) == 2
-    running_id = client.get("/api/generation/progress").json()["id"]
-    queued = next(job for job in jobs if job["id"] != running_id)
 
-    deleted = client.delete(f"/api/project-ingest/{queued['id']}")
+    deleted = client.delete(f"/api/project-ingest/{queued_id}")
     assert deleted.status_code == 200
 
     deadline = time.time() + 15
-    while time.time() < deadline and ("value" not in first or "value" not in second):
+    while time.time() < deadline:
+        listed = client.get("/api/project-ingest").json()["jobs"]
+        if len(listed) == 1 and listed[0]["video_path"]:
+            break
         time.sleep(0.05)
-    assert first["value"].status == "complete"  # type: ignore[union-attr]
-    assert second["value"].status == "cancelled"  # type: ignore[union-attr]
+    listed = client.get("/api/project-ingest").json()["jobs"]
+    assert len(listed) == 1
+    assert listed[0]["prompt"] == "first"
+    assert listed[0]["video_path"]
+    assert listed[0]["id"] == r1.json()["id"]
+
+
+def test_many_project_name_generates_appear_in_ingest_immediately(
+    client, test_state, fake_services, create_fake_model_files
+) -> None:
+    """Regression: blocking POSTs exhausted browser connections so card 5 never appeared
+    until an earlier job finished. Queued responses must free the connection immediately."""
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    pipeline = fake_services.fast_video_pipeline
+    pipeline.inference_steps = 20
+    pipeline.step_delay_s = 0.05
+
+    ids: list[str] = []
+    for i in range(8):
+        r = client.post(
+            "/api/generate",
+            json={**_T2V_JSON, "prompt": f"prompt {i}", "projectName": "Moon"},
+        )
+        assert r.status_code == 200
+        assert r.json()["status"] == "queued"
+        ids.append(r.json()["id"])
+
+    jobs = client.get("/api/project-ingest").json()["jobs"]
+    assert len(jobs) == 8
+    assert [job["id"] for job in jobs] == ids
+    assert [job["prompt"] for job in jobs] == [f"prompt {i}" for i in range(8)]
+    assert all(job["video_path"] == "" for job in jobs)
+
+    # Stop the runner so the test does not wait for eight full fake generations.
+    test_state.generation.cancel_generation()
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if not client.get("/api/project-ingest").json()["jobs"]:
+            break
+        # Cancel only stops the running job; drop remaining queued via delete.
+        for job in client.get("/api/project-ingest").json()["jobs"]:
+            client.delete(f"/api/project-ingest/{job['id']}")
+        time.sleep(0.05)
 
 
 def test_generate_queue_full_returns_429(test_state, fake_services, create_fake_model_files) -> None:

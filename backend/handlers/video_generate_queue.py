@@ -41,6 +41,20 @@ class VideoGenerateQueue:
         self._thread: threading.Thread | None = None
 
     def submit(self, job_id: str, req: GenerateVideoRequest) -> GenerateVideoResponse:
+        job = self._enqueue_locked(job_id, req)
+        job.done.wait()
+        if job.error is not None:
+            raise job.error
+        if job.response is None:
+            raise HTTPError(500, "Video generation produced no response")
+        return job.response
+
+    def enqueue(self, job_id: str, req: GenerateVideoRequest) -> None:
+        """Add to the FIFO without blocking — used for projectName ingest so HTTP
+        connections are not held for the whole queue+GPU lifetime (browsers cap ~6)."""
+        self._enqueue_locked(job_id, req)
+
+    def _enqueue_locked(self, job_id: str, req: GenerateVideoRequest) -> QueuedVideoGenerate:
         job = QueuedVideoGenerate(job_id=job_id, req=req)
         with self._cv:
             occupied = len(self._pending) + (1 if self._running is not None else 0)
@@ -49,12 +63,7 @@ class VideoGenerateQueue:
             self._pending.append(job)
             self._ensure_worker_locked()
             self._cv.notify()
-        job.done.wait()
-        if job.error is not None:
-            raise job.error
-        if job.response is None:
-            raise HTTPError(500, "Video generation produced no response")
-        return job.response
+        return job
 
     def cancel_queued(self, job_id: str) -> bool:
         with self._cv:
