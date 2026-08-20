@@ -3704,6 +3704,92 @@
         "title": "ProjectIngestJob",
         "type": "object"
       },
+      "ProjectIngestJobDetailResponse": {
+        "description": "Single ingest job lookup — includes video_url once the file is ready.",
+        "properties": {
+          "audio": {
+            "title": "Audio",
+            "type": "boolean"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "number"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "fps": {
+            "title": "Fps",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "projectName": {
+            "title": "Projectname",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "complete"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "video_path": {
+            "default": "",
+            "title": "Video Path",
+            "type": "string"
+          },
+          "video_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Url"
+          }
+        },
+        "required": [
+          "id",
+          "projectName",
+          "status",
+          "prompt",
+          "model",
+          "resolution",
+          "duration",
+          "fps",
+          "audio",
+          "createdAt"
+        ],
+        "title": "ProjectIngestJobDetailResponse",
+        "type": "object"
+      },
       "ProjectIngestListResponse": {
         "properties": {
           "jobs": {
@@ -6112,6 +6198,56 @@
           }
         },
         "summary": "Route Delete Project Ingest",
+        "tags": [
+          "project-ingest"
+        ]
+      },
+      "get": {
+        "operationId": "route_get_project_ingest_api_project_ingest__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectIngestJobDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Get Project Ingest",
         "tags": [
           "project-ingest"
         ]

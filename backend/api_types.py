@@ -392,6 +392,23 @@ class ProjectIngestListResponse(BaseModel):
     jobs: list[ProjectIngestJob]
 
 
+class ProjectIngestJobDetailResponse(BaseModel):
+    """Single ingest job lookup — includes video_url once the file is ready."""
+
+    id: str
+    projectName: str
+    video_path: str = ""
+    video_url: str | None = None
+    status: Literal["queued", "complete"]
+    prompt: str
+    model: str
+    resolution: str
+    duration: float | None
+    fps: int
+    audio: bool
+    createdAt: float
+
+
 class HTTPErrorResponse(BaseModel):
     code: str
     message: str

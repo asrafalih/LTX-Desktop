@@ -114,6 +114,63 @@ def test_delete_missing_ingest_job_returns_404(client) -> None:
     assert_http_error(response, status_code=404, code="HTTP_404", message="Ingest job not found")
 
 
+def test_get_project_ingest_by_id_queued_then_complete(
+    client, test_state, fake_services, create_fake_model_files
+) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    pipeline = fake_services.fast_video_pipeline
+    pipeline.inference_steps = 8
+    pipeline.step_delay_s = 0.05
+
+    r = client.post(
+        "/api/generate",
+        json={**_T2V_JSON, "prompt": "by id", "projectName": "Moon landing"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "queued"
+    job_id = r.json()["id"]
+
+    assert pipeline.entered_inference.wait(timeout=5)
+
+    queued = client.get(f"/api/project-ingest/{job_id}")
+    assert queued.status_code == 200
+    body = queued.json()
+    assert body["id"] == job_id
+    assert body["status"] == "queued"
+    assert body["video_path"] == ""
+    assert body["video_url"] is None
+    assert body["prompt"] == "by id"
+
+    deadline = time.time() + 15
+    complete = None
+    while time.time() < deadline:
+        resp = client.get(f"/api/project-ingest/{job_id}")
+        assert resp.status_code == 200
+        if resp.json()["status"] == "complete":
+            complete = resp.json()
+            break
+        time.sleep(0.05)
+    assert complete is not None
+    assert complete["video_path"]
+    assert complete["video_url"] == f"/api/outputs/{Path(complete['video_path']).name}"
+    assert Path(complete["video_path"]).exists()
+
+    # Desktop gallery deletes after import; GET by id must still return the video URL.
+    deleted = client.delete(f"/api/project-ingest/{job_id}")
+    assert deleted.status_code == 200
+    assert client.get("/api/project-ingest").json()["jobs"] == []
+    after_import = client.get(f"/api/project-ingest/{job_id}")
+    assert after_import.status_code == 200
+    assert after_import.json()["status"] == "complete"
+    assert after_import.json()["video_url"] == complete["video_url"]
+
+
+def test_get_project_ingest_missing_returns_404(client) -> None:
+    response = client.get("/api/project-ingest/missing1")
+    assert_http_error(response, status_code=404, code="HTTP_404", message="Ingest job not found")
+
+
 def _named_req(**overrides: object) -> GenerateVideoRequest:
     payload: dict[str, object] = {
         "prompt": "moon landing",

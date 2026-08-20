@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from api_types import ProjectIngestListResponse, StatusResponse
+from api_types import ProjectIngestJobDetailResponse, ProjectIngestListResponse, StatusResponse
 from state import get_state_service
 from app_handler import AppHandler
 
@@ -16,6 +16,14 @@ def route_list_project_ingest(
     handler: AppHandler = Depends(get_state_service),
 ) -> ProjectIngestListResponse:
     return handler.project_ingest.list_jobs()
+
+
+@router.get("/project-ingest/{job_id}", response_model=ProjectIngestJobDetailResponse)
+def route_get_project_ingest(
+    job_id: str,
+    handler: AppHandler = Depends(get_state_service),
+) -> ProjectIngestJobDetailResponse:
+    return handler.project_ingest.get_job(job_id)
 
 
 @router.delete("/project-ingest/{job_id}", response_model=StatusResponse)
