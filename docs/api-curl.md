@@ -159,6 +159,83 @@ curl -sS "$LTX_HOST/api/generate" \
 
 Optional fields: `imagePath`, `audioPath`, `seed`, `loras`, `negativePrompt`.
 
+For LAN clients, do **not** pass host filesystem paths. Upload the file first, then put the returned `url` into `imagePath` or `audioPath` (see [Upload image or audio](#upload-image-or-audio)).
+
+---
+
+## Upload image or audio
+
+LAN / remote clients cannot use absolute paths on the machine running LTX. Upload the media, then pass the opaque `url` as `imagePath` or `audioPath` on generate.
+
+### `POST /api/uploads`
+
+Multipart form: required `file`, optional `kind` (`image` | `audio`). If `kind` is omitted, the server infers from content-type / extension; if still ambiguous → `400`.
+
+Limits: image ≤ 50MB, audio ≤ 100MB. Uploads expire after **~24 hours** (swept on start and on each successful upload). There is no delete endpoint in v1.
+
+```bash
+# Image (i2v)
+UPLOAD=$(curl -sS "$LTX_HOST/api/uploads" \
+  -H "authorization: Bearer $LTX_API_TOKEN" \
+  -F "file=@./start-frame.png" \
+  -F "kind=image")
+echo "$UPLOAD"
+IMAGE_URL=$(echo "$UPLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin)['url'])")
+# → /api/uploads/<id>.png
+```
+
+```bash
+# Audio (a2v)
+UPLOAD=$(curl -sS "$LTX_HOST/api/uploads" \
+  -H "authorization: Bearer $LTX_API_TOKEN" \
+  -F "file=@./voice.wav" \
+  -F "kind=audio")
+AUDIO_URL=$(echo "$UPLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin)['url'])")
+```
+
+**Response:**
+
+```json
+{ "url": "/api/uploads/a1b2c3d4.png" }
+```
+
+### Generate with the upload URL
+
+```bash
+curl -sS "$LTX_HOST/api/generate" \
+  -H "authorization: Bearer $LTX_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d "{
+    \"prompt\": \"camera slowly pushes in\",
+    \"model\": \"fast\",
+    \"duration\": 5,
+    \"fps\": 24,
+    \"resolution\": \"540p\",
+    \"cameraMotion\": \"dolly_in\",
+    \"imagePath\": \"$IMAGE_URL\",
+    \"audio\": false,
+    \"aspectRatio\": \"16:9\"
+  }"
+```
+
+Accepted for `imagePath` / `audioPath`:
+
+| Value | Behavior |
+|-------|----------|
+| Absolute path on the host | Local/desktop only |
+| `/api/uploads/<filename>` | LAN-safe ref from `POST /api/uploads` |
+| `http://…`, `/api/outputs/…`, etc. | `400` |
+
+### `GET /api/uploads/{filename}`
+
+Download a previously uploaded file (auth required). `404` if missing, expired, or path traversal.
+
+```bash
+curl -sS -o uploaded.png \
+  "$LTX_HOST$IMAGE_URL" \
+  -H "authorization: Bearer $LTX_API_TOKEN"
+```
+
 ---
 
 ## Generation progress
@@ -248,6 +325,8 @@ curl -sS -o out.mp4 "$LTX_HOST$URL" -H "authorization: Bearer $LTX_API_TOKEN"
 | Action | Method | Path |
 |--------|--------|------|
 | Generate video | `POST` | `/api/generate` |
+| Upload image/audio | `POST` | `/api/uploads` |
+| Download upload | `GET` | `/api/uploads/{filename}` |
 | Progress | `GET` | `/api/generation/progress` |
 | Cancel running job | `POST` | `/api/generate/cancel` |
 | Get ingest job (video URL) | `GET` | `/api/project-ingest/{job_id}` |

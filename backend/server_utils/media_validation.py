@@ -29,6 +29,28 @@ def normalize_optional_path(value: str | None) -> str | None:
     return value
 
 
+def resolve_media_ref(value: str, *, uploads_dir: Path) -> str:
+    """Map generate media refs to filesystem paths.
+
+    Absolute paths pass through. ``/api/uploads/<filename>`` resolves under
+    ``uploads_dir`` (chrooted). Other URL-like values are rejected.
+    """
+    raw = value.strip()
+    upload_prefix = "/api/uploads/"
+    if raw.startswith(upload_prefix):
+        filename = raw[len(upload_prefix) :]
+        if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename:
+            raise HTTPError(400, f"Invalid media path: {value}")
+        root = uploads_dir.resolve()
+        path = (root / filename).resolve()
+        if not path.is_relative_to(root):
+            raise HTTPError(400, f"Invalid media path: {value}")
+        return str(path)
+    if "://" in raw or raw.startswith("/api/"):
+        raise HTTPError(400, f"Invalid media path: {value}")
+    return raw
+
+
 def _assert_is_file(file_path: Path, *, kind: str, raw_path: str) -> None:
     try:
         is_file = file_path.is_file()

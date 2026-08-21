@@ -156,6 +156,10 @@ class SuggestGapPromptResponse(BaseModel):
     suggested_prompt: str
 
 
+class UploadMediaResponse(BaseModel):
+    url: str
+
+
 class GenerateVideoCompleteResponse(BaseModel):
     status: Literal["complete"]
     video_path: str

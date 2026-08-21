@@ -15,6 +15,7 @@ from handlers import (
     ImageGenerationHandler,
     ModelsHandler,
     OutputsHandler,
+    UploadsHandler,
     ProjectIngestHandler,
     PipelinesHandler,
     LoraCatalogHandler,
@@ -221,6 +222,7 @@ class AppHandler:
 
         self.runtime_policy = RuntimePolicyHandler(config=config)
         self.outputs = OutputsHandler(config=config)
+        self.uploads = UploadsHandler(config=config)
 
         self.suggest_gap_prompt = SuggestGapPromptHandler(
             state=self.state,

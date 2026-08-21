@@ -2,6 +2,7 @@
 
 from handlers.download_handler import DownloadHandler
 from handlers.outputs_handler import OutputsHandler
+from handlers.uploads_handler import UploadsHandler
 from handlers.project_ingest_handler import ProjectIngestHandler
 from handlers.hf_auth_handler import HuggingFaceAuthHandler
 from handlers.generation_handler import GenerationHandler
@@ -39,5 +40,6 @@ __all__ = [
     "LoraCatalogHandler",
     "PromptEnhancementHandler",
     "OutputsHandler",
+    "UploadsHandler",
     "ProjectIngestHandler",
 ]

@@ -1,7 +1,7 @@
 # LAN media uploads — design
 
 **Date:** 2026-08-21  
-**Status:** Approved, pending implementation plan.
+**Status:** Implemented.
 
 ## Problem
 

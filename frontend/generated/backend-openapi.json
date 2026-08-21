@@ -296,6 +296,31 @@
         "title": "AuthorSpec",
         "type": "object"
       },
+      "Body_route_upload_media_api_uploads_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_route_upload_media_api_uploads_post",
+        "type": "object"
+      },
       "CancelCancellingResponse": {
         "properties": {
           "id": {
@@ -4359,6 +4384,19 @@
         ],
         "title": "TextEncoderRecommendationResponse",
         "type": "object"
+      },
+      "UploadMediaResponse": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "UploadMediaResponse",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -6586,6 +6624,107 @@
         "summary": "Route Shutdown",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/api/uploads": {
+      "post": {
+        "operationId": "route_upload_media_api_uploads_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_route_upload_media_api_uploads_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadMediaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Upload Media",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/api/uploads/{filename}": {
+      "get": {
+        "operationId": "route_get_upload_api_uploads__filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Get Upload",
+        "tags": [
+          "uploads"
         ]
       }
     },

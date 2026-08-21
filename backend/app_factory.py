@@ -25,6 +25,7 @@ from _routes.image_gen import router as image_gen_router
 from _routes.prompt_enhancement import router as prompt_enhancement_router
 from _routes.models import router as models_router
 from _routes.outputs import router as outputs_router
+from _routes.uploads import router as uploads_router
 from _routes.project_ingest import router as project_ingest_router
 from _routes.suggest_gap_prompt import router as suggest_gap_prompt_router
 from _routes.retake import router as retake_router
@@ -231,6 +232,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(generation_router)
     app.include_router(outputs_router)
+    app.include_router(uploads_router)
     app.include_router(project_ingest_router)
     app.include_router(models_router)
     app.include_router(settings_router)

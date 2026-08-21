@@ -51,6 +51,7 @@ from handlers.video_generate_queue import VideoGenerateQueue
 from runtime_config.model_download_specs import is_duration_head_ready, resolve_active_ltx_model_id
 from server_utils.media_validation import (
     normalize_optional_path,
+    resolve_media_ref,
     validate_audio_file,
     validate_image_file,
 )
@@ -116,6 +117,14 @@ class VideoGenerationHandler(StateHandlerBase):
         self._ltx_api_client = ltx_api_client
         self._project_ingest = project_ingest_handler
         self._queue = VideoGenerateQueue(self._run_queued_job)
+
+    def _normalize_media_path(self, value: str | None) -> str | None:
+        normalized = normalize_optional_path(value)
+        if normalized is None:
+            return None
+        return resolve_media_ref(
+            normalized, uploads_dir=self.config.app_data_dir / "uploads"
+        )
 
     def _resolve_prompt_enhancement(
         self, prompt: str, *, image_path: str | None
@@ -187,7 +196,7 @@ class VideoGenerationHandler(StateHandlerBase):
         if validation_error is not None:
             raise HTTPError(422, validation_error, code="INVALID_VIDEO_GENERATION_SPEC")
 
-        audio_path = normalize_optional_path(req.audioPath)
+        audio_path = self._normalize_media_path(req.audioPath)
         if audio_path and req.duration is None:
             raise HTTPError(
                 422,
@@ -229,7 +238,7 @@ class VideoGenerationHandler(StateHandlerBase):
             duration = req.duration
             fps = req.fps
 
-            audio_path = normalize_optional_path(req.audioPath)
+            audio_path = self._normalize_media_path(req.audioPath)
             if audio_path:
                 assert duration is not None
                 return self._generate_a2v(
@@ -262,7 +271,7 @@ class VideoGenerationHandler(StateHandlerBase):
                 num_frames = self._compute_num_frames(duration, fps)
 
             image = None
-            image_path = normalize_optional_path(req.imagePath)
+            image_path = self._normalize_media_path(req.imagePath)
             if image_path:
                 image = self._prepare_image(image_path, width, height)
                 logger.info("Image: %s -> %sx%s", image_path, width, height)
@@ -455,7 +464,7 @@ class VideoGenerationHandler(StateHandlerBase):
 
         image = None
         temp_image_path: str | None = None
-        image_path = normalize_optional_path(req.imagePath)
+        image_path = self._normalize_media_path(req.imagePath)
         if image_path:
             image = self._prepare_image(image_path, width, height)
 
@@ -576,8 +585,8 @@ class VideoGenerationHandler(StateHandlerBase):
             try:
                 self._generation.start_api_generation(generation_id)
 
-                audio_path = normalize_optional_path(req.audioPath)
-                image_path = normalize_optional_path(req.imagePath)
+                audio_path = self._normalize_media_path(req.audioPath)
+                image_path = self._normalize_media_path(req.imagePath)
                 has_input_audio = bool(audio_path)
                 has_input_image = bool(image_path)
 
