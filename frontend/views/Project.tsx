@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, Sparkles, Film } from 'lucide-react'
+import { ArrowLeft, BookOpen, Sparkles, Film } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
 import { LtxLogo } from '../components/LtxLogo'
+import { ProjectContinuityModal } from '../components/ProjectContinuityModal'
 import { Button } from '../components/ui/button'
+import { hasActiveContinuity } from '../lib/compose-project-prompt'
 import { GenSpace } from './GenSpace'
 import { VideoEditor } from './VideoEditor'
 import type { ProjectTab } from '../types/project-model'
@@ -27,6 +29,7 @@ export function Project() {
   const { goHome } = useView()
   const [assetMetadataMigrationProgress, setAssetMetadataMigrationProgress] = useState({ running: false, total: 0, completed: 0 })
   const [upgradePassProjectId, setUpgradePassProjectId] = useState<string | null>(null)
+  const [continuityOpen, setContinuityOpen] = useState(false)
   const activeProjectId = activeProject?.id ?? null
   const activeProjectAssets = activeProject?.assets ?? null
   const needsAssetMetadataMigration = activeProjectAssets
@@ -157,9 +160,34 @@ export function Project() {
           ))}
         </div>
         
-        {/* Right spacer - equal to left to keep tabs centered */}
-        <div className="flex-1" />
+        <div className="flex-1 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={() => setContinuityOpen(true)}
+            className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+            title="Project continuity"
+          >
+            <BookOpen className="h-4 w-4" />
+            <span className="hidden sm:inline">Continuity</span>
+            {hasActiveContinuity(activeProject.promptContinuity) ? (
+              <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-blue-400" aria-hidden />
+            ) : null}
+          </button>
+        </div>
       </header>
+
+      <ProjectContinuityModal
+        isOpen={continuityOpen}
+        onClose={() => setContinuityOpen(false)}
+        value={activeProject.promptContinuity}
+        onSave={(promptContinuity) => {
+          setProject(activeProject.id, {
+            ...activeProject,
+            promptContinuity,
+            updatedAt: Date.now(),
+          })
+        }}
+      />
       
       <main className="flex-1 overflow-hidden relative">
         {currentTab === 'gen-space' ? (
