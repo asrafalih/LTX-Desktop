@@ -1,7 +1,7 @@
 # Project continuity prompts — design
 
 **Date:** 2026-08-21  
-**Status:** Approved. Implementation plan: `docs/superpowers/plans/2026-08-21-project-continuity-prompts.md`.
+**Status:** Implemented.
 
 ## Problem
 
