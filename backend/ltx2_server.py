@@ -164,7 +164,13 @@ if use_sage_attention:
 # Constants & Paths
 # ============================================================
 
-from runtime_config.port_constant import PORT, advertise_bind_host, resolve_bind_host
+from runtime_config.port_constant import (
+    PORT,
+    advertise_bind_host,
+    allowed_origins_for_bind,
+    assert_lan_bind_has_auth,
+    resolve_bind_host,
+)
 
 
 def _get_device() -> torch.device:
@@ -211,7 +217,7 @@ SETTINGS_FILE = SETTINGS_DIR / "settings.json"
 
 DEFAULT_APP_SETTINGS = AppSettings()
 
-from app_factory import DEFAULT_ALLOWED_ORIGINS, create_app
+from app_factory import create_app
 from state import RuntimeConfig, build_initial_state
 from runtime_config.runtime_policy import LocalGenerationMode, decide_local_generation_mode
 from server_utils.model_layout_migration import migrate_legacy_models_layout
@@ -292,13 +298,15 @@ runtime_config = RuntimeConfig(
 
 handler = build_initial_state(runtime_config, DEFAULT_APP_SETTINGS)
 
+bind_host = resolve_bind_host(os.environ.get("LTX_BIND_HOST"))
+
 auth_token = os.environ.get("LTX_AUTH_TOKEN", "")
 api_token = os.environ.get("LTX_API_TOKEN", "")
 admin_token = os.environ.get("LTX_ADMIN_TOKEN", "")
 
 app = create_app(
     handler=handler,
-    allowed_origins=DEFAULT_ALLOWED_ORIGINS,
+    allowed_origins=allowed_origins_for_bind(bind_host),
     auth_token=auth_token,
     api_token=api_token,
     admin_token=admin_token,
@@ -348,8 +356,8 @@ if __name__ == "__main__":
     import uvicorn
 
     port = runtime_config.backend_port
-    bind_host = resolve_bind_host(os.environ.get("LTX_BIND_HOST"))
     advertise_host = advertise_bind_host(bind_host)
+    assert_lan_bind_has_auth(bind_host, auth_token, api_token)
     logger.info("=" * 60)
     logger.info("LTX-2 Video Generation Server (FastAPI + Uvicorn)")
     log_hardware_info()

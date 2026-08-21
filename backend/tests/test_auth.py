@@ -121,3 +121,23 @@ def test_openapi_declares_http_bearer(test_state):
     assert schemes["HTTPBearer"]["type"] == "http"
     assert schemes["HTTPBearer"]["scheme"] == "bearer"
     assert {"HTTPBearer": []} in schema.get("security", [])
+
+
+def test_lan_cors_allows_any_origin(test_state):
+    from runtime_config.port_constant import allowed_origins_for_bind
+
+    app = create_app(
+        handler=test_state,
+        auth_token="test-secret",
+        allowed_origins=allowed_origins_for_bind("0.0.0.0"),
+    )
+    with TestClient(app) as client:
+        r = client.get(
+            "/health",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "Origin": "http://192.168.1.50:3000",
+            },
+        )
+        assert r.status_code == 200
+        assert r.headers.get("access-control-allow-origin") in {"*", "http://192.168.1.50:3000"}
