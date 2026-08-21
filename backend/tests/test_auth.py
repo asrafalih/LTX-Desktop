@@ -92,3 +92,32 @@ def test_api_token_only_accepted(test_state):
         assert ok.status_code == 200
         missing = client.get("/health")
         assert_http_error(missing, status_code=401, code="HTTP_401", message="Unauthorized")
+
+
+def test_docs_and_openapi_are_public_when_auth_configured(test_state):
+    app = create_app(handler=test_state, auth_token="test-secret")
+    with TestClient(app) as client:
+        docs = client.get("/docs")
+        assert docs.status_code == 200
+        openapi = client.get("/openapi.json")
+        assert openapi.status_code == 200
+        redoc = client.get("/redoc")
+        assert redoc.status_code == 200
+
+
+def test_api_still_requires_token_when_docs_are_public(test_state):
+    app = create_app(handler=test_state, auth_token="test-secret")
+    with TestClient(app) as client:
+        response = client.get("/health")
+        assert_http_error(response, status_code=401, code="HTTP_401", message="Unauthorized")
+        ok = client.get("/health", headers={"Authorization": "Bearer test-secret"})
+        assert ok.status_code == 200
+
+
+def test_openapi_declares_http_bearer(test_state):
+    app = create_app(handler=test_state, auth_token="test-secret")
+    schema = app.openapi()
+    schemes = schema["components"]["securitySchemes"]
+    assert schemes["HTTPBearer"]["type"] == "http"
+    assert schemes["HTTPBearer"]["scheme"] == "bearer"
+    assert {"HTTPBearer": []} in schema.get("security", [])

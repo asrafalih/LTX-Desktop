@@ -54,6 +54,15 @@ DEFAULT_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     },
 }
 
+_UNAUTHENTICATED_PATHS = frozenset({
+    "/docs",
+    "/docs/",
+    "/redoc",
+    "/redoc/",
+    "/openapi.json",
+    "/docs/oauth2-redirect",
+})
+
 
 def _looks_like_json(body: bytes) -> bool:
     stripped = body.lstrip()
@@ -114,6 +123,8 @@ def create_app(
         if request.method == "OPTIONS":
             return await call_next(request)
         if request.url.path == "/api/auth/huggingface/callback":
+            return await call_next(request)
+        if request.url.path in _UNAUTHENTICATED_PATHS:
             return await call_next(request)
         def _token_matches(candidate: str) -> bool:
             matched = False
@@ -232,5 +243,23 @@ def create_app(
     app.include_router(prompt_enhancement_router)
     app.include_router(runtime_policy_router)
     app.include_router(hf_auth_router)
+
+    _default_openapi = app.openapi
+
+    def custom_openapi() -> dict[str, Any]:
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = _default_openapi()
+        components = schema.setdefault("components", {})
+        security_schemes = components.setdefault("securitySchemes", {})
+        security_schemes["HTTPBearer"] = {
+            "type": "http",
+            "scheme": "bearer",
+        }
+        schema["security"] = [{"HTTPBearer": []}]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = custom_openapi  # type: ignore[method-assign]
 
     return app
