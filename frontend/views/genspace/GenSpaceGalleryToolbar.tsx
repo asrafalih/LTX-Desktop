@@ -1,4 +1,4 @@
-import { Heart, Sparkles } from 'lucide-react'
+import { BookOpen, Heart, Sparkles } from 'lucide-react'
 import type { GenSpaceSortDir, GenSpaceSortKey, GenSpaceTypeFilter } from '../../lib/genspace-gallery'
 import { GenSpaceGallerySizeMenu, type GallerySize } from './GenSpaceGallerySizeMenu'
 import { GenSpaceSortMenu } from './GenSpaceSortMenu'
@@ -16,6 +16,8 @@ export function GenSpaceGalleryToolbar({
   showFavorites,
   favoriteCount,
   onToggleFavorites,
+  projectSettingsActive,
+  onOpenProjectSettings,
   gallerySize,
   onGallerySizeChange,
 }: {
@@ -30,6 +32,8 @@ export function GenSpaceGalleryToolbar({
   showFavorites: boolean
   favoriteCount: number
   onToggleFavorites: () => void
+  projectSettingsActive: boolean
+  onOpenProjectSettings: () => void
   gallerySize: GallerySize
   onGallerySizeChange: (size: GallerySize) => void
 }) {
@@ -72,6 +76,18 @@ export function GenSpaceGalleryToolbar({
               {favoriteCount}
             </span>
           )}
+        </button>
+        <button
+          type="button"
+          onClick={onOpenProjectSettings}
+          className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+          title="Project Settings"
+        >
+          <BookOpen className="h-4 w-4" />
+          Project Settings
+          {projectSettingsActive ? (
+            <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-blue-400" aria-hidden />
+          ) : null}
         </button>
         <GenSpaceGallerySizeMenu
           gallerySize={gallerySize}

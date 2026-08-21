@@ -44,9 +44,11 @@ import { useGlobalGenerationLock } from '../hooks/use-global-generation-lock'
 import type { ICLoraConditioningType } from '../components/ICLoraPanel'
 import type { Asset } from '../types/project-model'
 import { AssetPreviewModal } from '../components/AssetPreviewModal'
+import { ProjectContinuityModal } from '../components/ProjectContinuityModal'
 import { GenerationErrorDialog } from '../components/GenerationErrorDialog'
 import { addVisualAssetToProject } from '../lib/asset-copy'
 import { pathToFileUrl } from '../lib/file-url'
+import { hasActiveContinuity } from '../lib/compose-project-prompt'
 import {
   areVideoGenerationSettingsEquivalent,
   formatPipelineDisplayName,
@@ -1234,7 +1236,7 @@ function PromptBar({
 
 const DEFAULT_VIDEO_SETTINGS = {
   model: 'fast',
-  duration: 5 as number | null,
+  duration: null as number | null,
   videoResolution: '540p',
   fps: 24,
   aspectRatio: '16:9',
@@ -1247,6 +1249,7 @@ const DEFAULT_VIDEO_SETTINGS = {
 export function GenSpace() {
   const {
     activeProject,
+    setProject,
     addAsset,
     addTakeToAsset,
     updateAsset,
@@ -1265,6 +1268,7 @@ export function GenSpace() {
     setPendingIcLoraUpdate,
   } = useProjects()
   const currentProjectId = activeProject?.id ?? null
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false)
   const ingestJobs = useProjectIngestJobs()
   const [progressGenerationId, setProgressGenerationId] = useState<string | null>(null)
   const [progressStatus, setProgressStatus] = useState<string | null>(null)
@@ -2988,6 +2992,8 @@ export function GenSpace() {
             showFavorites={showFavorites}
             favoriteCount={favoriteCount}
             onToggleFavorites={onToggleFavorites}
+            projectSettingsActive={hasActiveContinuity(activeProject?.promptContinuity)}
+            onOpenProjectSettings={() => setProjectSettingsOpen(true)}
             gallerySize={gallerySize}
             onGallerySizeChange={setGallerySize}
           />
@@ -3292,6 +3298,20 @@ export function GenSpace() {
           </div>
         )}
       </div>
+
+      <ProjectContinuityModal
+        isOpen={projectSettingsOpen}
+        onClose={() => setProjectSettingsOpen(false)}
+        value={activeProject?.promptContinuity}
+        onSave={(promptContinuity) => {
+          if (!activeProject) return
+          setProject(activeProject.id, {
+            ...activeProject,
+            promptContinuity,
+            updatedAt: Date.now(),
+          })
+        }}
+      />
 
       <LoraLibraryModal
         open={loraLibrary.modalOpen}
