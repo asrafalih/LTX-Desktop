@@ -77,7 +77,7 @@ Follow existing backend layering:
 
 1. `_routes/uploads.py` — thin POST/GET plumbing.
 2. `handlers/uploads_handler.py` — write file, build public URL, resolve filename, TTL sweep.
-3. Shared resolver (extend `normalize_optional_path` or add `resolve_media_ref`) called from video generation before `validate_image_file` / `validate_audio_file`.
+3. Shared resolver `resolve_media_ref(value)` used by video generation before `validate_image_file` / `validate_audio_file`: maps `/api/uploads/…` → absolute path under uploads dir; passes through absolute paths; rejects other URL-like values. Keep `normalize_optional_path` for empty/whitespace only.
 4. Wire handler on `AppHandler` / service bundle as needed; OpenAPI regenerate; document curl in `docs/api-curl.md`.
 
 ### Error summary
