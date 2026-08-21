@@ -4360,6 +4360,12 @@
         "title": "TextEncoderRecommendationResponse",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -6624,5 +6630,10 @@
         ]
       }
     }
-  }
+  },
+  "security": [
+    {
+      "HTTPBearer": []
+    }
+  ]
 }

@@ -1,5 +1,9 @@
 # LTX Desktop — Generate API (curl)
 
+Start headless with `LTX_API_TOKEN=… pnpm backend:serve`, or set `LTX_API_TOKEN` /
+`LTX_BIND_HOST` when launching the desktop app. Interactive docs: `$LTX_HOST/docs`
+(Swagger loads without a token; click Authorize and paste the Bearer token).
+
 Replace the host and token with yours (Dev Panel / `LTX_API_TOKEN`).
 
 ```bash
