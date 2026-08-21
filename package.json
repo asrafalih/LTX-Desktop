@@ -18,6 +18,7 @@
     "dev": "vite",
     "dev:debug": "cross-env BACKEND_DEBUG=1 ELECTRON_DEBUG=1 vite",
     "perf:dev": "node scripts/perf-dev.mjs",
+    "backend:serve": "node scripts/backend-serve.mjs",
     "typecheck": "concurrently \"pnpm run typecheck:ts\" \"pnpm run typecheck:py\"",
     "typecheck:ts": "tsc --noEmit",
     "typecheck:py": "cd backend && uv run pyright",
