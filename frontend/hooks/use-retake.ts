@@ -4,6 +4,8 @@ import { ApiClient } from '../lib/api-client'
 import { canCancelLocalJob, withGenerationActive } from '../lib/generation-active'
 import { logger } from '../lib/logger'
 import { useAppSettings } from '../contexts/AppSettingsContext'
+import { useProjects } from '../contexts/ProjectContext'
+import { composeProjectPrompt } from '../lib/compose-project-prompt'
 
 export type RetakeMode = 'replace_audio_and_video' | 'replace_video' | 'replace_audio'
 
@@ -46,6 +48,7 @@ interface UseRetakeState {
 
 export function useRetake() {
   const { shouldVideoGenerateWithLtxApi, shouldImageGenerateWithFalApi } = useAppSettings()
+  const { activeProject } = useProjects()
   const [state, setState] = useState<UseRetakeState>({
     isRetaking: false,
     canCancel: false,
@@ -66,11 +69,16 @@ export function useRetake() {
     })
 
     await withGenerationActive(async () => {
+      const { finalPrompt } = composeProjectPrompt(
+        params.prompt,
+        activeProject?.promptContinuity,
+      )
+
       const result = await ApiClient.retake({
         video_path: params.videoPath,
         start_time: params.startTime,
         duration: params.duration,
-        prompt: params.prompt,
+        prompt: finalPrompt,
         mode: params.mode,
         resolution: params.resolution,
         model: params.model,
@@ -124,7 +132,7 @@ export function useRetake() {
         result: null,
       })
     })
-  }, [shouldImageGenerateWithFalApi, shouldVideoGenerateWithLtxApi])
+  }, [activeProject?.promptContinuity, shouldImageGenerateWithFalApi, shouldVideoGenerateWithLtxApi])
 
   const resetRetake = useCallback(() => {
     setState({

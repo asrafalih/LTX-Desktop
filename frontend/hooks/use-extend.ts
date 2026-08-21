@@ -3,6 +3,8 @@ import { ApiClient } from '../lib/api-client'
 import { canCancelLocalJob, withGenerationActive } from '../lib/generation-active'
 import { logger } from '../lib/logger'
 import { useAppSettings } from '../contexts/AppSettingsContext'
+import { useProjects } from '../contexts/ProjectContext'
+import { composeProjectPrompt } from '../lib/compose-project-prompt'
 import type { RetakeExtendModel } from './use-retake'
 
 export type ExtendDirection = 'start' | 'end'
@@ -34,6 +36,7 @@ interface UseExtendState {
 
 export function useExtend() {
   const { shouldVideoGenerateWithLtxApi, shouldImageGenerateWithFalApi } = useAppSettings()
+  const { activeProject } = useProjects()
   const [state, setState] = useState<UseExtendState>({
     isExtending: false,
     canCancel: false,
@@ -54,10 +57,15 @@ export function useExtend() {
     })
 
     await withGenerationActive(async () => {
+      const { finalPrompt } = composeProjectPrompt(
+        params.prompt,
+        activeProject?.promptContinuity,
+      )
+
       const result = await ApiClient.extend({
         video_path: params.videoPath,
         duration: params.duration,
-        prompt: params.prompt,
+        prompt: finalPrompt,
         mode: params.mode,
         resolution: params.resolution,
         model: params.model,
@@ -99,7 +107,7 @@ export function useExtend() {
         result: null,
       })
     })
-  }, [shouldImageGenerateWithFalApi, shouldVideoGenerateWithLtxApi])
+  }, [activeProject?.promptContinuity, shouldImageGenerateWithFalApi, shouldVideoGenerateWithLtxApi])
 
   const resetExtend = useCallback(() => {
     setState({ isExtending: false, canCancel: false, extendStatus: '', extendError: null, result: null })

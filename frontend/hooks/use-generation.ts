@@ -5,6 +5,8 @@ import { createLocalGenerationError, type GenerationError } from '../lib/generat
 import { canCancelLocalJob, withGenerationActive } from '../lib/generation-active'
 import { getProjectIngestJobs, isIngestJobKnown } from '../lib/project-ingest-jobs'
 import { useAppSettings } from '../contexts/AppSettingsContext'
+import { useProjects } from '../contexts/ProjectContext'
+import { composeProjectPrompt } from '../lib/compose-project-prompt'
 
 const POLLING_INTERVAL_MS = 2000
 
@@ -140,6 +142,7 @@ export function getPhaseMessage(phase: string): string {
 
 export function useGeneration(): UseGenerationReturn {
   const { settings: appSettings, shouldImageGenerateWithFalApi, shouldVideoGenerateWithLtxApi, refreshSettings } = useAppSettings()
+  const { activeProject } = useProjects()
   const [state, setState] = useState<GenerationState>({
     isGenerating: false,
     isCancelling: false,
@@ -243,16 +246,21 @@ export function useGeneration(): UseGenerationReturn {
 
     await withGenerationActive(async () => {
       try {
+        const { finalPrompt, negativePrompt } = composeProjectPrompt(
+          prompt,
+          activeProject?.promptContinuity,
+        )
+
         // Prepare JSON body
         const body: Record<string, unknown> = {
-          prompt,
+          prompt: finalPrompt,
           model: settings.model,
           duration: settings.duration,
           resolution: settings.videoResolution,
           fps: settings.fps,
           audio: settings.audio,
           cameraMotion: settings.cameraMotion,
-          negativePrompt: (settings as { negativePrompt?: string }).negativePrompt ?? '',
+          negativePrompt,
           aspectRatio: settings.aspectRatio || '16:9',
         }
         if (imagePath) {
@@ -392,7 +400,7 @@ export function useGeneration(): UseGenerationReturn {
         }
       }
     })
-  }, [shouldImageGenerateWithFalApi, shouldVideoGenerateWithLtxApi])
+  }, [activeProject?.promptContinuity, shouldImageGenerateWithFalApi, shouldVideoGenerateWithLtxApi])
 
   const cancel = useCallback(() => {
     let claimedCancelling = false
