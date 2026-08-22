@@ -8,7 +8,7 @@ LTX Desktop is an Electron app for AI video generation using LTX models. Three-l
 
 - **Frontend** (`frontend/`): React 18 + TypeScript + Tailwind CSS renderer
 - **Electron** (`electron/`): Main process managing app lifecycle, IPC, Python backend process, ffmpeg export
-- **Backend** (`backend/`): Python FastAPI server (port 8000) handling ML model orchestration and generation
+- **Backend** (`backend/`): Python FastAPI server (port 41954) handling ML model orchestration and generation
 
 ## Common Commands
 

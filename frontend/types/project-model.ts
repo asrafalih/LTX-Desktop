@@ -85,6 +85,8 @@ export const generationParamsSchema = z.object({
     name: z.string(),
     scale: z.number(),
   })).optional(),
+  // Wall-clock seconds from generation start to asset import (optional; older assets omit it).
+  generationDurationSec: z.number().optional(),
 })
 
 export const assetTakeSchema = z.object({
@@ -336,6 +338,17 @@ export const timelineSchema = z.object({
 
 export const assetBinsSchema = z.record(z.string(), z.string())
 
+export const promptContinuityEntrySchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  text: z.string(),
+})
+
+export const promptContinuitySchema = z.object({
+  entries: z.array(promptContinuityEntrySchema),
+  negativePrompt: z.string(),
+})
+
 export const projectV2Schema = z.object({
   version: z.literal(2),
   id: z.string(),
@@ -346,6 +359,7 @@ export const projectV2Schema = z.object({
   assets: z.array(assetSchema),
   timelines: z.array(timelineSchema),
   activeTimelineId: z.string().optional(),
+  promptContinuity: promptContinuitySchema.optional(),
 })
 
 const assetV1Schema = assetSchema
@@ -390,6 +404,8 @@ export type TextOverlayStyle = z.infer<typeof textOverlayStyleSchema>
 export type TimelineClip = z.infer<typeof timelineClipSchema>
 export type Timeline = z.infer<typeof timelineSchema>
 export type AssetBins = z.infer<typeof assetBinsSchema>
+export type PromptContinuityEntry = z.infer<typeof promptContinuityEntrySchema>
+export type PromptContinuity = z.infer<typeof promptContinuitySchema>
 export type ProjectV1 = z.infer<typeof projectV1Schema>
 export type ProjectV2 = z.infer<typeof projectV2Schema>
 export type Project = ProjectV2

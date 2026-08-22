@@ -296,6 +296,31 @@
         "title": "AuthorSpec",
         "type": "object"
       },
+      "Body_route_upload_media_api_uploads_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_route_upload_media_api_uploads_post",
+        "type": "object"
+      },
       "CancelCancellingResponse": {
         "properties": {
           "id": {
@@ -1030,11 +1055,16 @@
           "video_path": {
             "title": "Video Path",
             "type": "string"
+          },
+          "video_url": {
+            "title": "Video Url",
+            "type": "string"
           }
         },
         "required": [
           "status",
-          "video_path"
+          "video_path",
+          "video_url"
         ],
         "title": "GenerateVideoCompleteResponse",
         "type": "object"
@@ -1061,6 +1091,26 @@
           "api_models"
         ],
         "title": "GenerateVideoModelsSpecsResponse",
+        "type": "object"
+      },
+      "GenerateVideoQueuedResponse": {
+        "description": "Returned when projectName ingest enqueues without blocking the HTTP request.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "id"
+        ],
+        "title": "GenerateVideoQueuedResponse",
         "type": "object"
       },
       "GenerateVideoRequest": {
@@ -1173,6 +1223,17 @@
             "default": "",
             "title": "Negativeprompt",
             "type": "string"
+          },
+          "projectName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectname"
           },
           "prompt": {
             "minLength": 1,
@@ -3603,6 +3664,173 @@
         "title": "PreprocessingStep",
         "type": "object"
       },
+      "ProjectIngestJob": {
+        "properties": {
+          "audio": {
+            "title": "Audio",
+            "type": "boolean"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "number"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "fps": {
+            "title": "Fps",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "projectName": {
+            "title": "Projectname",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "video_path": {
+            "default": "",
+            "title": "Video Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "projectName",
+          "prompt",
+          "model",
+          "resolution",
+          "duration",
+          "fps",
+          "audio",
+          "createdAt"
+        ],
+        "title": "ProjectIngestJob",
+        "type": "object"
+      },
+      "ProjectIngestJobDetailResponse": {
+        "description": "Single ingest job lookup — includes video_url once the file is ready.",
+        "properties": {
+          "audio": {
+            "title": "Audio",
+            "type": "boolean"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "number"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "fps": {
+            "title": "Fps",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "projectName": {
+            "title": "Projectname",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "complete"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "video_path": {
+            "default": "",
+            "title": "Video Path",
+            "type": "string"
+          },
+          "video_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Url"
+          }
+        },
+        "required": [
+          "id",
+          "projectName",
+          "status",
+          "prompt",
+          "model",
+          "resolution",
+          "duration",
+          "fps",
+          "audio",
+          "createdAt"
+        ],
+        "title": "ProjectIngestJobDetailResponse",
+        "type": "object"
+      },
+      "ProjectIngestListResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectIngestJob"
+            },
+            "title": "Jobs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "jobs"
+        ],
+        "title": "ProjectIngestListResponse",
+        "type": "object"
+      },
       "PromptTemplatePlaceholder": {
         "properties": {
           "choices": {
@@ -4156,6 +4384,25 @@
         ],
         "title": "TextEncoderRecommendationResponse",
         "type": "object"
+      },
+      "UploadMediaResponse": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "UploadMediaResponse",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -4500,6 +4747,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/GenerateVideoCancelledResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GenerateVideoQueuedResponse"
                     }
                   ],
                   "title": "Response Route Generate Api Generate Post"
@@ -5854,6 +6104,199 @@
         ]
       }
     },
+    "/api/outputs/{filename}": {
+      "get": {
+        "operationId": "route_get_output_api_outputs__filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Get Output",
+        "tags": [
+          "outputs"
+        ]
+      }
+    },
+    "/api/project-ingest": {
+      "get": {
+        "operationId": "route_list_project_ingest_api_project_ingest_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectIngestListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route List Project Ingest",
+        "tags": [
+          "project-ingest"
+        ]
+      }
+    },
+    "/api/project-ingest/{job_id}": {
+      "delete": {
+        "operationId": "route_delete_project_ingest_api_project_ingest__job_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Delete Project Ingest",
+        "tags": [
+          "project-ingest"
+        ]
+      },
+      "get": {
+        "operationId": "route_get_project_ingest_api_project_ingest__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectIngestJobDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Get Project Ingest",
+        "tags": [
+          "project-ingest"
+        ]
+      }
+    },
     "/api/retake": {
       "post": {
         "operationId": "route_retake_api_retake_post",
@@ -6184,6 +6627,107 @@
         ]
       }
     },
+    "/api/uploads": {
+      "post": {
+        "operationId": "route_upload_media_api_uploads_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_route_upload_media_api_uploads_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadMediaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Upload Media",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/api/uploads/{filename}": {
+      "get": {
+        "operationId": "route_get_upload_api_uploads__filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Get Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "operationId": "route_health_health_get",
@@ -6225,5 +6769,10 @@
         ]
       }
     }
-  }
+  },
+  "security": [
+    {
+      "HTTPBearer": []
+    }
+  ]
 }

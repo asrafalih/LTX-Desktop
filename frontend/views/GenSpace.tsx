@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
-  Trash2, Download, Image, Video, X,
+  Trash2, Download, Image, Video, X, Info,
   Heart, Film, Volume2, VolumeX, Sparkles, Sparkle,
   Clock, Monitor, ChevronUp, Scissors, Music, Undo2, Redo2, Loader2,
   MoveHorizontal, Wand2, Square
@@ -8,8 +8,20 @@ import {
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
 import { useAppSettings } from '../contexts/AppSettingsContext'
-import { useGeneration, GENERATION_RECOVERY_KEY, type GenerationRecoveryContext } from '../hooks/use-generation'
+import { useGeneration, GENERATION_RECOVERY_KEY, getPhaseMessage, type GenerationRecoveryContext } from '../hooks/use-generation'
 import { setActiveGenerationOwner, hasValidBaselineId } from '../lib/generation-recovery'
+import {
+  useProjectIngestJobs,
+  claimGenerationImport,
+  releaseGenerationImport,
+  refreshProjectIngestJobs,
+  isIngestJobKnown,
+  markIngestJobRunStarted,
+  formatGenerationDuration,
+  type ProjectIngestJob,
+} from '../lib/project-ingest-jobs'
+import { Tooltip } from '../components/ui/tooltip'
+import { subscribeWhileGenerationMayBeActive } from '../lib/generation-progress-poll'
 import { withGenerationActive, canCancelLocalJob } from '../lib/generation-active'
 import { useVideoGenerationModelSpecs } from '../hooks/use-video-generation-model-specs'
 import { createLocalGenerationError, type GenerationError } from '../lib/generation-errors'
@@ -32,9 +44,11 @@ import { useGlobalGenerationLock } from '../hooks/use-global-generation-lock'
 import type { ICLoraConditioningType } from '../components/ICLoraPanel'
 import type { Asset } from '../types/project-model'
 import { AssetPreviewModal } from '../components/AssetPreviewModal'
+import { ProjectContinuityModal } from '../components/ProjectContinuityModal'
 import { GenerationErrorDialog } from '../components/GenerationErrorDialog'
 import { addVisualAssetToProject } from '../lib/asset-copy'
 import { pathToFileUrl } from '../lib/file-url'
+import { hasActiveContinuity } from '../lib/compose-project-prompt'
 import {
   areVideoGenerationSettingsEquivalent,
   formatPipelineDisplayName,
@@ -96,6 +110,8 @@ function AssetCard({
   const [isMuted, setIsMuted] = useState(true)
   const [volume, setVolume] = useState(0.5)
   const isFavorite = asset.favorite || false
+  const promptText = (asset.prompt || asset.generationParams?.prompt || '').trim()
+  const generationDurationSec = asset.generationParams?.generationDurationSec
 
   useEffect(() => {
     if (asset.type !== 'video') return
@@ -249,6 +265,18 @@ function AssetCard({
           </div>
           
           <div className="flex items-center gap-1.5">
+            {promptText !== '' && (
+              <Tooltip content={promptText} side="bottom" wrap>
+                <button
+                  type="button"
+                  onClick={(e) => e.stopPropagation()}
+                  className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors"
+                  aria-label="Show prompt"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            )}
             <button
               onClick={handleDownload}
               className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors"
@@ -266,6 +294,12 @@ function AssetCard({
               <div className="px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs font-mono">
                 {formatTime(currentTime)}
               </div>
+              {generationDurationSec != null && (
+                <div className="px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1">
+                  <Clock className="h-3 w-3 opacity-80" />
+                  Generated in {formatGenerationDuration(generationDurationSec)}
+                </div>
+              )}
               <div className="flex items-center gap-1.5 rounded-lg bg-black/40 backdrop-blur-md pl-1.5 pr-2 py-1">
                 <button
                   onClick={(e) => { e.stopPropagation(); setIsMuted(!isMuted) }}
@@ -297,6 +331,12 @@ function AssetCard({
                 />
               </div>
             </div>
+          </div>
+        )}
+        {asset.type === 'image' && generationDurationSec != null && (
+          <div className="absolute bottom-2 left-2 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1">
+            <Clock className="h-3 w-3 opacity-80" />
+            Generated in {formatGenerationDuration(generationDurationSec)}
           </div>
         )}
 
@@ -473,6 +513,7 @@ function PromptBar({
   onGenerate,
   onStop,
   isGenerating,
+  allowEnqueueWhileBusy = false,
   isCancelling,
   inputImage,
   onInputImageChange,
@@ -527,6 +568,7 @@ function PromptBar({
   onGenerate: () => void
   onStop?: () => void
   isGenerating: boolean
+  allowEnqueueWhileBusy?: boolean
   isCancelling?: boolean
   canGenerate: boolean
   buttonLabel: string
@@ -720,7 +762,7 @@ function PromptBar({
   }
   
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isGenerating && canGenerate && !isEnhancingPrompt) {
+    if (e.key === 'Enter' && !e.shiftKey && !(isGenerating && !allowEnqueueWhileBusy) && canGenerate && !isEnhancingPrompt) {
       e.preventDefault()
       onGenerate()
     }
@@ -728,7 +770,7 @@ function PromptBar({
 
   const showStop = Boolean(isGenerating && onStop)
   const stopDisabled = Boolean(isCancelling)
-  const generateDisabled = isGenerating || !canGenerate || isEnhancingPrompt
+  const generateDisabled = (isGenerating && !allowEnqueueWhileBusy) || !canGenerate || isEnhancingPrompt
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-visible">
@@ -1194,7 +1236,7 @@ function PromptBar({
 
 const DEFAULT_VIDEO_SETTINGS = {
   model: 'fast',
-  duration: 5 as number | null,
+  duration: null as number | null,
   videoResolution: '540p',
   fps: 24,
   aspectRatio: '16:9',
@@ -1207,6 +1249,7 @@ const DEFAULT_VIDEO_SETTINGS = {
 export function GenSpace() {
   const {
     activeProject,
+    setProject,
     addAsset,
     addTakeToAsset,
     updateAsset,
@@ -1225,6 +1268,16 @@ export function GenSpace() {
     setPendingIcLoraUpdate,
   } = useProjects()
   const currentProjectId = activeProject?.id ?? null
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false)
+  const ingestJobs = useProjectIngestJobs()
+  const [progressGenerationId, setProgressGenerationId] = useState<string | null>(null)
+  const [progressStatus, setProgressStatus] = useState<string | null>(null)
+  const [queueProgress, setQueueProgress] = useState(0)
+  const [queueStatusMessage, setQueueStatusMessage] = useState('')
+  const queueInferenceStartRef = useRef(0)
+  const queueLastPhaseRef = useRef('')
+  const queueTrackedIdRef = useRef<string | null>(null)
+  const hasIngestCards = ingestJobs.length > 0
   const { shouldVideoGenerateWithLtxApi, shouldImageGenerateWithFalApi, forceApiGenerations, settings: appSettings } = useAppSettings()
   const {
     modelSpecs: videoGenerationModelSpecsResponse,
@@ -1265,6 +1318,11 @@ export function GenSpace() {
       customLoraRef?: string
     }
   } | null>(null)
+  const videoEnqueueLockRef = useRef(false)
+  const lastVideoEnqueueRef = useRef<{ prompt: string; at: number } | null>(null)
+  // Set synchronously when this mount enqueues video — tryResumeFromMarker must not restore
+  // the prompt from the recovery marker we just wrote (meant for navigate-away recovery only).
+  const localVideoGenerateStartedRef = useRef(false)
   // Provenance for the completion effect below: imagePaths/isGenerating alone can't tell
   // it whether the request that just finished was an edit or a plain generation.
   const lastImageEditRef = useRef<{ source: string; strength: number } | null>(null)
@@ -1301,6 +1359,69 @@ export function GenSpace() {
     cancel,
     canCancel: generationCanCancel,
   } = useGeneration()
+
+  // Single progress poll for queue cards (projectName generates skip useGeneration's per-POST
+  // pollers, which previously fought over one shared bar and made it jump up/down).
+  useEffect(() => {
+    if (!isGenerating && !hasIngestCards) return
+    let cancelled = false
+
+    const applyProgress = (data: {
+      id?: string | null
+      status: string
+      phase: string
+      progress: number
+    }) => {
+      const id = data.id ?? null
+      setProgressGenerationId(id)
+      setProgressStatus(data.status)
+
+      if (data.status !== 'running') {
+        queueLastPhaseRef.current = data.phase
+        return
+      }
+
+      if (id != null && id !== queueTrackedIdRef.current) {
+        queueTrackedIdRef.current = id
+        queueInferenceStartRef.current = 0
+        queueLastPhaseRef.current = ''
+        setQueueProgress(0)
+        setQueueStatusMessage(getPhaseMessage(data.phase))
+      }
+      if (id != null) markIngestJobRunStarted(id)
+
+      let displayProgress = data.progress
+      let nextStatusMessage = getPhaseMessage(data.phase)
+      if (data.phase === 'inference') {
+        if (queueLastPhaseRef.current !== 'inference') {
+          queueInferenceStartRef.current = Date.now()
+        }
+        const elapsed = (Date.now() - queueInferenceStartRef.current) / 1000
+        const inferenceProgress = Math.min(elapsed / 45, 0.95)
+        displayProgress = 15 + Math.floor(inferenceProgress * 80)
+      }
+      if (data.phase === 'complete') {
+        displayProgress = 95
+        nextStatusMessage = 'Finalizing...'
+      }
+      queueLastPhaseRef.current = data.phase
+      setQueueProgress(displayProgress)
+      setQueueStatusMessage(nextStatusMessage)
+    }
+
+    const tick = async () => {
+      const result = await ApiClient.getGenerationProgress()
+      if (cancelled || !result.ok) return
+      applyProgress(result.data)
+    }
+
+    void tick()
+    const timer = window.setInterval(() => { void tick() }, 500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [isGenerating, hasIngestCards])
 
   // Locally installed LoRAs are only usable in local generation mode.
   const isLocalMode = !shouldVideoGenerateWithLtxApi
@@ -1709,8 +1830,15 @@ export function GenSpace() {
   // effect below is still copying the result into project storage" window — the marker is only
   // removed once that effect's own reset()/resetX() runs, so ownership must last at least that
   // long too, or the watcher can import the same completion a second time.
+  // projectName generates never set videoPath (ingest imports instead), so keep ownership while
+  // any ingest card for this project is still pending/importing.
+  const projectNeedleForOwner = (activeProject?.name ?? '').trim().toLowerCase()
+  const hasProjectIngestWork = ingestJobs.some(
+    job => job.projectName.trim().toLowerCase() === projectNeedleForOwner,
+  )
   const isAnyLocalGenerationInFlight = isGenerating || isRetaking || isExtending || isIcLoraGenerating
     || !!videoPath || imagePaths.length > 0 || !!retakeResult || !!extendResult || !!icLoraResult
+    || hasProjectIngestWork
   useEffect(() => {
     if (!isAnyLocalGenerationInFlight) return
     setActiveGenerationOwner(currentProjectId)
@@ -1718,38 +1846,54 @@ export function GenSpace() {
   }, [currentProjectId, isAnyLocalGenerationInFlight])
 
   useEffect(() => {
-    const saved = localStorage.getItem(GENERATION_RECOVERY_KEY)
-    if (!saved) return
-    let ctx: GenerationRecoveryContext
-    try { ctx = JSON.parse(saved) as GenerationRecoveryContext } catch { return }
-    if (!hasValidBaselineId(ctx)) return // legacy/corrupt marker — the watcher will drop it
-    // Belongs to a different project (e.g. the user started this generation in project A, then
-    // navigated Home and into project B — GenSpace remounts per project). Not ours to touch.
-    if (ctx.projectId !== currentProjectIdRef.current) return
-    // Enhance recovery is handled by its own effect (different state: isEnhancingPrompt, not
-    // isGenerating/videoPath/imagePath) — leave the marker for it to consume.
-    if (ctx.genType === 'enhance') return
+    if (!isGenerating) localVideoGenerateStartedRef.current = false
+  }, [isGenerating])
 
-    void (async () => {
-      const progress = await ApiClient.getGenerationProgress()
+  useEffect(() => {
+    let cancelled = false
+    let resumed = false
+
+    const tryResumeFromMarker = async (
+      progress: Awaited<ReturnType<typeof ApiClient.getGenerationProgress>>,
+    ) => {
+      if (cancelled || resumed) return
+      const saved = localStorage.getItem(GENERATION_RECOVERY_KEY)
+      if (!saved) return
+      let ctx: GenerationRecoveryContext
+      try { ctx = JSON.parse(saved) as GenerationRecoveryContext } catch { return }
+      if (!hasValidBaselineId(ctx)) return
+      if (ctx.projectId !== currentProjectIdRef.current) return
+      if (ctx.genType === 'enhance') return
       if (!progress.ok) return
-      // Same identity check as the background watcher (checkAndConsumeRecovery in
-      // lib/generation-recovery.ts): the handler that starts a generation loads its pipeline —
-      // which can take many seconds, worse for image models loading checkpoint shards — BEFORE
-      // it ever reports a new id, so a poll right after remounting can still be looking at
-      // whatever the single global progress slot held before this marker was even written.
-      if (progress.data.id === ctx.baselineId) return // unchanged since before we wrote this marker — not started reporting yet
-      if (progress.data.status !== 'running') return // already past 'running' (complete/error/etc) — that's the watcher's job to persist, not ours to restore UI for
 
+      const observedId = progress.data.id
+      // Ingest markers may be written after the job is already reporting, with generationId
+      // set to that job. Trust the confirmed id rather than requiring id !== baselineId.
+      if (ctx.generationId != null) {
+        if (observedId !== ctx.generationId) return
+      } else if (observedId === ctx.baselineId) {
+        return
+      }
+      if (progress.data.status !== 'running') return
+      if (localVideoGenerateStartedRef.current) return
+
+      resumed = true
       const status = await resumeIfRunning()
-      if (status !== 'running') return // finished between our two checks — again, the watcher's job now
+      if (cancelled) return
+      if (status !== 'running') {
+        resumed = false
+        return
+      }
 
-      // Restore the inputs the completion effect reads, so the recovered asset is eventually
-      // persisted (once it finishes) with the right prompt/mode/settings (incl. selected LoRAs),
-      // not an empty prompt and default settings.
-      setPrompt(ctx.prompt)
-      setLastPrompt(ctx.prompt)
-      // ic-lora/retake carry no settings: recover as a standalone video asset.
+      // Ingest/queue jobs show the prompt on their gallery cards; the textarea was cleared on
+      // enqueue. Restoring it here (e.g. leave project and re-open) puts a stale prompt back.
+      const ingestOwned = ctx.fromIngest === true
+        || isIngestJobKnown(ctx.generationId)
+        || isIngestJobKnown(observedId)
+      if (!ingestOwned) {
+        setPrompt(ctx.prompt)
+        setLastPrompt(ctx.prompt)
+      }
       const s = ctx.settings
       if (!s) {
         setMode('video')
@@ -1770,20 +1914,21 @@ export function GenSpace() {
           variations: s.variations ?? prev.variations,
           imageEditStrength: s.imageEditStrength ?? prev.imageEditStrength,
         }))
-        // The completion effect reads this ref (not settings/inputImage) to tag a
-        // recovered image asset as an edit — restore it so recovery matches the
-        // live handleGenerate() path.
         if (ctx.genType === 'image' && ctx.inputImageUrl) {
           lastImageEditRef.current = { source: ctx.inputImageUrl, strength: s.imageEditStrength ?? 0.6 }
         }
       }
-    })()
+    }
+
+    return subscribeWhileGenerationMayBeActive(result => {
+      void tryResumeFromMarker(result)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // mount only
+  }, [resumeIfRunning])
 
   // When video generation completes, add to project assets
   useEffect(() => {
-    if (!videoPath || !currentProjectId || isGenerating) return
+    if (!videoPath || !currentProjectId) return
 
     // Dedup is by persistedVideoKeyRef, not an assets path-match like the image effect:
     // addVisualAssetToProject copies to a fresh path so the source videoPath never appears
@@ -1792,6 +1937,20 @@ export function GenSpace() {
     const generationKey = videoPath
     if (persistedVideoKeyRef.current === generationKey) return
     persistedVideoKeyRef.current = generationKey
+
+    // projectName / ingest path already owns this file — don't addAsset again.
+    const ingestOwnsPath = ingestJobs.some(job => job.video_path === videoPath)
+    if (ingestOwnsPath) {
+      if (!isGenerating) reset()
+      return
+    }
+    const importKeys = progressGenerationId
+      ? [`generation:${progressGenerationId}`, `result:${videoPath}`] as const
+      : [`result:${videoPath}`] as const
+    if (!claimGenerationImport(importKeys)) {
+      if (!isGenerating) reset()
+      return
+    }
 
     const genMode = inputAudio
       ? 'audio-to-video'
@@ -1840,13 +1999,14 @@ export function GenSpace() {
           }],
           activeTakeIndex: 0,
         })
-        reset()
+        if (!isGenerating) reset()
       } catch (err) {
+        releaseGenerationImport(importKeys)
         persistedVideoKeyRef.current = null
         logger.error(`Failed to persist generated video asset: ${err}`)
       }
     })()
-  }, [videoPath, currentProjectId, isGenerating, sanitizeVideoSettings, settings, inputImage, inputAudio, lastPrompt, addAsset, reset, selectedLoras, canUseUserLoras, appSettings.modelsDir])
+  }, [videoPath, currentProjectId, isGenerating, sanitizeVideoSettings, settings, inputImage, inputAudio, lastPrompt, addAsset, reset, selectedLoras, canUseUserLoras, appSettings.modelsDir, ingestJobs, progressGenerationId])
 
   // When retake completes, add as take or new asset
   useEffect(() => {
@@ -2163,6 +2323,7 @@ export function GenSpace() {
     ctx: Omit<GenerationRecoveryContext, 'projectId' | 'baselineId' | 'canCancel'>,
   ) => {
     if (!currentProjectId) return
+    if (localStorage.getItem(GENERATION_RECOVERY_KEY) != null) return
     const before = await ApiClient.getGenerationProgress()
     if (!before.ok) {
       // Fail closed: a failed fetch is indistinguishable from a legitimate idle baseline
@@ -2542,6 +2703,17 @@ export function GenSpace() {
       generateImage(prompt, imageSettings, editSource)
     } else {
       // Generate video (t2v if no image/audio, i2v if image, a2v if audio)
+      if (videoEnqueueLockRef.current) return
+      const now = Date.now()
+      if (
+        lastVideoEnqueueRef.current
+        && lastVideoEnqueueRef.current.prompt === prompt
+        && now - lastVideoEnqueueRef.current.at < 500
+      ) {
+        return
+      }
+      videoEnqueueLockRef.current = true
+      try {
       const imagePath = inputImage || null
       const audioPath = inputAudio || null
       const videoSettings = sanitizeVideoSettings(settings)
@@ -2559,13 +2731,27 @@ export function GenSpace() {
           // Local LoRA refs are filesystem paths the cloud API can't resolve.
           loras: canUseUserLoras && selectedLoras.length > 0 ? selectedLoras : undefined,
       }
-      await writeRecoveryContext({
-        prompt,
-        settings: genSettings,
-        inputImageUrl: imagePath ?? undefined,
-        inputAudioUrl: audioPath ?? undefined,
-      })
-      generate(prompt, imagePath, genSettings, audioPath)
+      localVideoGenerateStartedRef.current = true
+      // Project-ingest jobs carry their own recovery marker via useProjectIngestWatcher.
+      // Writing one here too would block later queued jobs and can double-import on complete.
+      if (!activeProject?.name?.trim()) {
+        await writeRecoveryContext({
+          prompt,
+          settings: genSettings,
+          inputImageUrl: imagePath ?? undefined,
+          inputAudioUrl: audioPath ?? undefined,
+        })
+      }
+      generate(prompt, imagePath, genSettings, audioPath, activeProject?.name)
+      lastVideoEnqueueRef.current = { prompt, at: Date.now() }
+      setPrompt('')
+      // Don't wait for the 1s ingest poll — refresh so the new card appears in FIFO order ASAP.
+      void refreshProjectIngestJobs()
+      window.setTimeout(() => { void refreshProjectIngestJobs() }, 200)
+      window.setTimeout(() => { void refreshProjectIngestJobs() }, 800)
+      } finally {
+        videoEnqueueLockRef.current = false
+      }
     }
   }
   
@@ -2649,7 +2835,11 @@ export function GenSpace() {
   // Generate (isOtherGenerationRunning) is the SSOT for "slot busy" / Stop.
   const slotBusyLocally = isGenerating || isRetaking || isExtending || isIcLoraGenerating
   const slotBusy = slotBusyLocally || isOtherGenerationRunning
-  const canSubmit = !isOtherGenerationRunning && !slotBusyLocally && (isRetakeMode
+  const canSubmitVideo = !!prompt.trim() && hasCompatibleVideoSettings
+    && !isRetaking && !isExtending && !isIcLoraGenerating
+  const canSubmit = mode === 'video'
+    ? canSubmitVideo
+    : !isOtherGenerationRunning && !slotBusyLocally && (isRetakeMode
     ? retakeInput.ready && !!retakeInput.videoPath
     : isExtendMode
       ? extendInput.ready && !!extendInput.videoPath
@@ -2677,9 +2867,34 @@ export function GenSpace() {
   const inFlightCanStop = globalCanCancel
     || generationCanCancel || retakeCanCancel || extendCanCancel || icLoraCanCancel
   const isLibraryMode = mode === 'video' || mode === 'image'
-  const showGeneratingTile = isGenerating
+  const projectNeedle = (activeProject?.name ?? '').trim().toLowerCase()
+  const projectIngestJobs = ingestJobs.filter(job =>
+    job.projectName.trim().toLowerCase() === projectNeedle
+  )
+  // ingestJobs is already FIFO by createdAt; keep a named pending list for running detection.
+  const pendingIngestJobs = projectIngestJobs.filter(job => !job.video_path)
+  const isIngestJobRunning = useCallback((job: ProjectIngestJob): boolean => {
+    if (job.video_path) return false
+    // Authoritative: backend progress id matches this ingest job and is still running.
+    if (progressStatus === 'running' && progressGenerationId === job.id) return true
+    if (progressGenerationId != null && pendingIngestJobs.some(j => j.id === progressGenerationId)) {
+      return false
+    }
+    // Starting gap (no id yet) or sticky complete of a finished job — oldest pending is next.
+    if (isGenerating && pendingIngestJobs[0]?.id === job.id) {
+      if (progressStatus === 'running' && progressGenerationId != null) return false
+      return true
+    }
+    return false
+  }, [progressGenerationId, progressStatus, pendingIngestJobs, isGenerating])
+  const showGeneratingTile = projectIngestJobs.length === 0
+    && isGenerating
     && (mode === 'image' || mode === 'video')
     && shouldShowGeneratingTile(typeFilter, mode)
+  const cardStatusMessage = projectIngestJobs.length > 0
+    ? (queueStatusMessage || 'Generating...')
+    : (statusMessage || 'Generating...')
+  const cardProgress = projectIngestJobs.length > 0 ? queueProgress : progress
 
   // Navigation for the asset preview modal
   const selectedIndex = selectedAsset ? filteredAssets.findIndex(a => a.id === selectedAsset.id) : -1
@@ -2739,7 +2954,7 @@ export function GenSpace() {
     <div className="h-full relative bg-zinc-950">
 
       {/* Empty state */}
-      {isLibraryMode && assets.length === 0 && !isGenerating && (
+      {isLibraryMode && assets.length === 0 && !isGenerating && projectIngestJobs.length === 0 && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
           <div className="w-24 h-24 rounded-2xl border-2 border-dashed border-zinc-700 flex items-center justify-center mb-4">
             <Sparkles className="h-10 w-10 text-zinc-600" />
@@ -2777,6 +2992,8 @@ export function GenSpace() {
             showFavorites={showFavorites}
             favoriteCount={favoriteCount}
             onToggleFavorites={onToggleFavorites}
+            projectSettingsActive={hasActiveContinuity(activeProject?.promptContinuity)}
+            onOpenProjectSettings={() => setProjectSettingsOpen(true)}
             gallerySize={gallerySize}
             onGallerySizeChange={setGallerySize}
           />
@@ -2784,8 +3001,76 @@ export function GenSpace() {
           {/* Assets grid — fills remaining space, scrollable */}
           <div className="overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] flex-1">
             <div className={`grid ${gallerySizeClasses[gallerySize]} gap-4`}>
+              {mode === 'video' && projectIngestJobs.map(job => {
+                const isImporting = Boolean(job.video_path)
+                const isRunning = !isImporting && isIngestJobRunning(job)
+                const promptText = job.prompt.trim()
+                return (
+                  <div key={job.id} className="group relative rounded-xl overflow-hidden bg-zinc-800 aspect-video">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center px-3">
+                      {isImporting ? (
+                        <>
+                          <div className="relative w-16 h-16 mb-3">
+                            <div className="absolute inset-0 rounded-full border-2 border-violet-500/30" />
+                            <div className="absolute inset-0 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
+                            <div className="absolute inset-2 rounded-full bg-zinc-800 flex items-center justify-center">
+                              <Sparkles className="h-6 w-6 text-violet-400" />
+                            </div>
+                          </div>
+                          <p className="text-sm text-zinc-400">Adding to project...</p>
+                        </>
+                      ) : isRunning ? (
+                        <>
+                          <div className="relative w-16 h-16 mb-3">
+                            <div className="absolute inset-0 rounded-full border-2 border-violet-500/30" />
+                            <div className="absolute inset-0 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
+                            <div className="absolute inset-2 rounded-full bg-zinc-800 flex items-center justify-center">
+                              <Sparkles className="h-6 w-6 text-violet-400" />
+                            </div>
+                          </div>
+                          <p className="text-sm text-zinc-400">{cardStatusMessage}</p>
+                          {cardProgress > 0 && (
+                            <div className="w-32 h-1 bg-zinc-800 rounded-full mt-2 overflow-hidden">
+                              <div className="h-full bg-violet-500 transition-all" style={{ width: `${cardProgress}%` }} />
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-sm font-medium text-zinc-300">Queued</p>
+                      )}
+                    </div>
+                    {promptText !== '' && (
+                      <div className="absolute top-2 right-2 z-20">
+                        <Tooltip content={promptText} side="bottom" wrap>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white/80 hover:bg-black/60 hover:text-white transition-colors"
+                            aria-label="Show prompt"
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
+                      </div>
+                    )}
+                    {!isRunning && !isImporting && (
+                      <button
+                        type="button"
+                        className="absolute bottom-2 right-2 z-20 p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white/70 hover:bg-red-500/80 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
+                        aria-label="Remove from queue"
+                        onClick={() => {
+                          void ApiClient.deleteProjectIngest(job.id).then(() => {
+                            void refreshProjectIngestJobs()
+                          })
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
               {showGeneratingTile && (
-                <div className="relative rounded-xl overflow-hidden bg-zinc-800 aspect-video">
+                <div className="group relative rounded-xl overflow-hidden bg-zinc-800 aspect-video">
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
                     <div className="relative w-16 h-16 mb-3">
                       <div className="absolute inset-0 rounded-full border-2 border-violet-500/30" />
@@ -2801,6 +3086,19 @@ export function GenSpace() {
                       </div>
                     )}
                   </div>
+                  {lastPrompt.trim() !== '' && (
+                    <div className="absolute top-2 right-2 z-20">
+                      <Tooltip content={lastPrompt} side="bottom" wrap>
+                        <button
+                          type="button"
+                          className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white/80 hover:bg-black/60 hover:text-white transition-colors"
+                          aria-label="Show prompt"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      </Tooltip>
+                    </div>
+                  )}
                 </div>
               )}
               {filteredAssets.map(asset => (
@@ -2948,6 +3246,7 @@ export function GenSpace() {
           onGenerate={handleGenerate}
           onStop={inFlightCanStop ? handleStop : undefined}
           isGenerating={promptGenerating}
+          allowEnqueueWhileBusy={mode === 'video'}
           isCancelling={isStopping || globalIsCancelling}
           canGenerate={canSubmit}
           buttonLabel={promptButtonLabel}
@@ -2999,6 +3298,20 @@ export function GenSpace() {
           </div>
         )}
       </div>
+
+      <ProjectContinuityModal
+        isOpen={projectSettingsOpen}
+        onClose={() => setProjectSettingsOpen(false)}
+        value={activeProject?.promptContinuity}
+        onSave={(promptContinuity) => {
+          if (!activeProject) return
+          setProject(activeProject.id, {
+            ...activeProject,
+            promptContinuity,
+            updatedAt: Date.now(),
+          })
+        }}
+      />
 
       <LoraLibraryModal
         open={loraLibrary.modalOpen}

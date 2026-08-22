@@ -604,6 +604,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/outputs/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Route Get Output */
+        get: operations["route_get_output_api_outputs__filename__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/project-ingest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Route List Project Ingest */
+        get: operations["route_list_project_ingest_api_project_ingest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/project-ingest/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Route Get Project Ingest */
+        get: operations["route_get_project_ingest_api_project_ingest__job_id__get"];
+        put?: never;
+        post?: never;
+        /** Route Delete Project Ingest */
+        delete: operations["route_delete_project_ingest_api_project_ingest__job_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/retake": {
         parameters: {
             query?: never;
@@ -707,6 +759,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Route Upload Media */
+        post: operations["route_upload_media_api_uploads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/uploads/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Route Get Upload */
+        get: operations["route_get_upload_api_uploads__filename__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -786,6 +872,13 @@ export interface components {
             name: string;
             /** Url */
             url?: string | null;
+        };
+        /** Body_route_upload_media_api_uploads_post */
+        Body_route_upload_media_api_uploads_post: {
+            /** File */
+            file: string;
+            /** Kind */
+            kind?: string | null;
         };
         /** CancelCancellingResponse */
         CancelCancellingResponse: {
@@ -1070,6 +1163,8 @@ export interface components {
             status: "complete";
             /** Video Path */
             video_path: string;
+            /** Video Url */
+            video_url: string;
         };
         /** GenerateVideoModelsSpecsResponse */
         GenerateVideoModelsSpecsResponse: {
@@ -1077,6 +1172,19 @@ export interface components {
             api_models: components["schemas"]["LTXVideoGenerationModelSpecItem"][];
             /** Local Models */
             local_models: components["schemas"]["LTXVideoGenerationModelSpecItem"][];
+        };
+        /**
+         * GenerateVideoQueuedResponse
+         * @description Returned when projectName ingest enqueues without blocking the HTTP request.
+         */
+        GenerateVideoQueuedResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "queued";
         };
         /** GenerateVideoRequest */
         GenerateVideoRequest: {
@@ -1125,6 +1233,8 @@ export interface components {
              * @default
              */
             negativePrompt: string;
+            /** Projectname */
+            projectName?: string | null;
             /** Prompt */
             prompt: string;
             /**
@@ -1946,6 +2056,73 @@ export interface components {
             /** Utility */
             utility: string;
         };
+        /** ProjectIngestJob */
+        ProjectIngestJob: {
+            /** Audio */
+            audio: boolean;
+            /** Createdat */
+            createdAt: number;
+            /** Duration */
+            duration: number | null;
+            /** Fps */
+            fps: number;
+            /** Id */
+            id: string;
+            /** Model */
+            model: string;
+            /** Projectname */
+            projectName: string;
+            /** Prompt */
+            prompt: string;
+            /** Resolution */
+            resolution: string;
+            /**
+             * Video Path
+             * @default
+             */
+            video_path: string;
+        };
+        /**
+         * ProjectIngestJobDetailResponse
+         * @description Single ingest job lookup — includes video_url once the file is ready.
+         */
+        ProjectIngestJobDetailResponse: {
+            /** Audio */
+            audio: boolean;
+            /** Createdat */
+            createdAt: number;
+            /** Duration */
+            duration: number | null;
+            /** Fps */
+            fps: number;
+            /** Id */
+            id: string;
+            /** Model */
+            model: string;
+            /** Projectname */
+            projectName: string;
+            /** Prompt */
+            prompt: string;
+            /** Resolution */
+            resolution: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "complete";
+            /**
+             * Video Path
+             * @default
+             */
+            video_path: string;
+            /** Video Url */
+            video_url?: string | null;
+        };
+        /** ProjectIngestListResponse */
+        ProjectIngestListResponse: {
+            /** Jobs */
+            jobs: components["schemas"]["ProjectIngestJob"][];
+        };
         /** PromptTemplatePlaceholder */
         PromptTemplatePlaceholder: {
             /** Choices */
@@ -2201,6 +2378,11 @@ export interface components {
             local_enhancer_expected_size_gb: number | null;
             /** Ltx Version Label */
             ltx_version_label: string;
+        };
+        /** UploadMediaResponse */
+        UploadMediaResponse: {
+            /** Url */
+            url: string;
         };
     };
     responses: never;
@@ -2470,7 +2652,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GenerateVideoCompleteResponse"] | components["schemas"]["GenerateVideoCancelledResponse"];
+                    "application/json": components["schemas"]["GenerateVideoCompleteResponse"] | components["schemas"]["GenerateVideoCancelledResponse"] | components["schemas"]["GenerateVideoQueuedResponse"];
                 };
             };
             /** @description LTX API credits are insufficient for the requested generation */
@@ -3576,6 +3758,164 @@ export interface operations {
             };
         };
     };
+    route_get_output_api_outputs__filename__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
+    route_list_project_ingest_api_project_ingest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectIngestListResponse"];
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
+    route_get_project_ingest_api_project_ingest__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectIngestJobDetailResponse"];
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
+    route_delete_project_ingest_api_project_ingest__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
     route_retake_api_retake_post: {
         parameters: {
             query?: never;
@@ -3834,6 +4174,88 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
+    route_upload_media_api_uploads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_route_upload_media_api_uploads_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadMediaResponse"];
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
+    route_get_upload_api_uploads__filename__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Client Error */

@@ -1,6 +1,9 @@
 """State handler exports."""
 
 from handlers.download_handler import DownloadHandler
+from handlers.outputs_handler import OutputsHandler
+from handlers.uploads_handler import UploadsHandler
+from handlers.project_ingest_handler import ProjectIngestHandler
 from handlers.hf_auth_handler import HuggingFaceAuthHandler
 from handlers.generation_handler import GenerationHandler
 from handlers.health_handler import HealthHandler
@@ -36,4 +39,7 @@ __all__ = [
     "HuggingFaceAuthHandler",
     "LoraCatalogHandler",
     "PromptEnhancementHandler",
+    "OutputsHandler",
+    "UploadsHandler",
+    "ProjectIngestHandler",
 ]

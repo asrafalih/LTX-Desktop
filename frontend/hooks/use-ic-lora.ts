@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react'
 import { ApiClient, type ApiRequestBodyOf } from '../lib/api-client'
 import { withGenerationActive } from '../lib/generation-active'
 import { logger } from '../lib/logger'
+import { useProjects } from '../contexts/ProjectContext'
+import { composeProjectPrompt } from '../lib/compose-project-prompt'
 
 export type IcLoraConditioningType = 'canny' | 'depth' | 'custom'
 export type IcLoraAudioMode = 'source' | 'generated' | 'off'
@@ -64,6 +66,7 @@ interface UseIcLoraState {
 type GenerateIcLoraBody = ApiRequestBodyOf<'generateIcLora'>
 
 export function useIcLora() {
+  const { activeProject } = useProjects()
   const [state, setState] = useState<UseIcLoraState>({
     isGenerating: false,
     canCancel: false,
@@ -89,11 +92,16 @@ export function useIcLora() {
     })
 
     await withGenerationActive(async () => {
+      const { finalPrompt } = composeProjectPrompt(
+        params.prompt,
+        activeProject?.promptContinuity,
+      )
+
       const result = await ApiClient.generateIcLora({
         video_path: params.videoPath,
         conditioning_type: params.conditioningType,
         conditioning_strength: params.conditioningStrength,
-        prompt: params.prompt,
+        prompt: finalPrompt,
         custom_lora_ref: params.customLoraRef,
         control_video_path: params.controlVideoPath,
         skip_stage_2: params.skipStage2,
@@ -149,7 +157,7 @@ export function useIcLora() {
         return
       }
     })
-  }, [])
+  }, [activeProject?.promptContinuity])
 
   const reset = useCallback(() => {
     setState({

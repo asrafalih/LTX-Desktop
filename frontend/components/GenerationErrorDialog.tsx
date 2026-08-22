@@ -58,6 +58,11 @@ function getDialogModel(error: GenerationError): {
           }
       }
       return assertNever(error.error.code)
+    case 429:
+      return {
+        humanMessage: 'The generate queue is full. Wait for a job to finish, then try again.',
+        technicalDetails: JSON.stringify(error.error, null, 2),
+      }
     case '4XX':
     case '5XX':
     case 'default':

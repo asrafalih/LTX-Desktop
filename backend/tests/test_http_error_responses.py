@@ -15,6 +15,38 @@ def test_validation_errors_use_http_error_response(client):
     assert "Field required" in payload["message"]
 
 
+def test_json_generate_body_parses_without_json_content_type(client):
+    """curl --data-raw sends application/x-www-form-urlencoded; still accept JSON objects."""
+    body = (
+        '{"prompt":"hi","model":"fast","duration":5,'
+        '"resolution":"540p","fps":24,"cameraMotion":"none"}'
+    )
+    response = client.post(
+        "/api/generate",
+        content=body.encode(),
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    message = response.json().get("message", "")
+    assert "model_attributes_type" not in message
+    assert "valid dictionary" not in message
+
+
+def test_json_generate_body_allows_raw_newlines_in_strings(client):
+    """zsh $'...\\n...' injects real newlines into JSON strings; still parse the prompt."""
+    body = (
+        '{"prompt":"line1\n\nline2","model":"fast","duration":5,'
+        '"resolution":"540p","fps":24,"cameraMotion":"none"}'
+    )
+    response = client.post(
+        "/api/generate",
+        content=body.encode(),
+        headers={"content-type": "application/json"},
+    )
+    message = response.json().get("message", "")
+    assert "json_invalid" not in message
+    assert "Invalid control character" not in message
+
+
 def test_unhandled_exceptions_use_http_error_response(test_state, monkeypatch):
     def _boom():
         raise RuntimeError("boom")

@@ -1,6 +1,12 @@
 import { ApiClient } from './api-client'
 import { GENERATION_RECOVERY_KEY, type GenerationRecoveryContext } from '../hooks/use-generation'
 import { builtinRecoveryImporters } from './generation-recovery-importers'
+import {
+  claimGenerationImport,
+  releaseGenerationImport,
+  getProjectIngestJobs,
+  isIngestJobKnown,
+} from './project-ingest-jobs'
 import type { Asset } from '../types/project-model'
 
 // Keyed the same way the recovery marker already is: undefined means the default "video" case
@@ -29,6 +35,30 @@ export function hasValidBaselineId(ctx: GenerationRecoveryContext): boolean {
   return typeof ctx.baselineId === 'string' || ctx.baselineId === null
 }
 
+export function readGenerationRecoveryContext(): GenerationRecoveryContext | null {
+  const saved = localStorage.getItem(GENERATION_RECOVERY_KEY)
+  if (!saved) return null
+  try {
+    const ctx = JSON.parse(saved) as GenerationRecoveryContext
+    return hasValidBaselineId(ctx) ? ctx : null
+  } catch {
+    return null
+  }
+}
+
+// The ingest watcher writes this marker after generate has already begun. If we stored the
+// live progress id as baselineId, GenSpace's mount recovery treats id === baselineId as
+// "not started yet" and never shows the generating tile.
+export function ingestRecoveryIdentity(
+  jobId: string,
+  observedProgressId: string | null,
+): Pick<GenerationRecoveryContext, 'baselineId' | 'generationId'> {
+  if (observedProgressId === jobId) {
+    return { baselineId: null, generationId: jobId }
+  }
+  return { baselineId: observedProgressId }
+}
+
 // The project whose GenSpace instance is currently mounted and already handling its own
 // generation lifecycle live (polling, completion effects). The background watcher backs off
 // entirely for it, so two independent pollers never race to import the same completion twice.
@@ -36,6 +66,19 @@ let activeOwnerProjectId: string | null = null
 
 export function setActiveGenerationOwner(projectId: string | null): void {
   activeOwnerProjectId = projectId
+}
+
+export function isActiveGenerationOwner(projectId: string): boolean {
+  return activeOwnerProjectId === projectId
+}
+
+// Curl ingest writes a recovery marker for Stop/progress, then copies the file itself when
+// video_path is filled. While that job is claimed, background recovery must not also import.
+const ingestOwnedGenerationIds = new Set<string>()
+
+export function setIngestOwnedGeneration(generationId: string, owned: boolean): void {
+  if (owned) ingestOwnedGenerationIds.add(generationId)
+  else ingestOwnedGenerationIds.delete(generationId)
 }
 
 // One check: is there a recovery marker, is anything registered to handle it, and if the
@@ -75,6 +118,31 @@ export async function checkAndConsumeRecovery(
   const observedId = progress.data.id
   const status = progress.data.status
 
+  // Project-ingest owns named generate jobs end-to-end. Never recovery-import those, even
+  // after the queue entry is deleted / ownership bit cleared — a sticky Complete poll can
+  // otherwise race GenSpace's activeOwner gap (projectName gens never set videoPath).
+  const ingestManages = (
+    (observedId != null && (
+      ingestOwnedGenerationIds.has(observedId)
+      || isIngestJobKnown(observedId)
+    ))
+    || (ctx.generationId != null && (
+      ingestOwnedGenerationIds.has(ctx.generationId)
+      || isIngestJobKnown(ctx.generationId)
+    ))
+    // Any still-listed ingest job for this generation id (including video_path filled).
+    || getProjectIngestJobs().some(job =>
+      job.id === observedId || job.id === ctx.generationId
+    )
+  )
+  if (ingestManages) {
+    if (ctx.generationId == null && observedId != null && observedId !== ctx.baselineId) {
+      ctx = { ...ctx, generationId: observedId }
+      localStorage.setItem(GENERATION_RECOVERY_KEY, JSON.stringify(ctx))
+    }
+    return
+  }
+
   if (ctx.generationId == null) {
     // Not yet confirmed. Any id different from the baseline captured when this marker was
     // written proves (single global generation slot) our generation has started — regardless of
@@ -94,9 +162,21 @@ export async function checkAndConsumeRecovery(
   if (status === 'running') return // still going — check again next tick
 
   if (status === 'complete' && progress.data.result != null) {
+    const resultPath = typeof progress.data.result === 'string'
+      ? progress.data.result
+      : progress.data.result[0]
+    const importKeys = [
+      ...(ctx.generationId ? [`generation:${ctx.generationId}`] : []),
+      ...(resultPath ? [`result:${resultPath}`] : []),
+    ]
+    if (importKeys.length === 0 || !claimGenerationImport(importKeys)) {
+      localStorage.removeItem(GENERATION_RECOVERY_KEY)
+      return
+    }
     try {
       await importer(ctx, progress.data.result, api)
     } catch {
+      releaseGenerationImport(importKeys)
       // Leave the marker in place so the next tick (or that project's own mount effect) can
       // retry — a failed copy/import must not silently drop the result.
       return

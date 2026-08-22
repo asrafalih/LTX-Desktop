@@ -372,7 +372,7 @@ export class ApiClient {
   })
 
   static generateVideo = makeEndpointClient('/api/generate', 'post', {
-    exactErrorStatuses: [402] as const,
+    exactErrorStatuses: [402, 429] as const,
   })
 
   static getGenerateVideoModelSpecs = makeEndpointClient('/api/generate/models-specs', 'get')
@@ -380,6 +380,20 @@ export class ApiClient {
   static cancelGeneration = makeEndpointClient('/api/generate/cancel', 'post')
 
   static getGenerationProgress = makeEndpointClient('/api/generation/progress', 'get')
+
+  static listProjectIngest = makeEndpointClient('/api/project-ingest', 'get')
+
+  static deleteProjectIngest(
+    jobId: string,
+  ): Promise<EndpointResult<'/api/project-ingest/{job_id}', 'delete'>> {
+    return requestEndpointResult(
+      '/api/project-ingest/{job_id}',
+      'delete',
+      [] as const,
+      undefined,
+      `/api/project-ingest/${encodeURIComponent(jobId)}`,
+    )
+  }
 
   static generateImage = makeEndpointClient('/api/generate-image', 'post')
 

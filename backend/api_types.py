@@ -156,16 +156,30 @@ class SuggestGapPromptResponse(BaseModel):
     suggested_prompt: str
 
 
+class UploadMediaResponse(BaseModel):
+    url: str
+
+
 class GenerateVideoCompleteResponse(BaseModel):
     status: Literal["complete"]
     video_path: str
+    video_url: str
 
 
 class GenerateVideoCancelledResponse(BaseModel):
     status: Literal["cancelled"]
 
 
-GenerateVideoResponse: TypeAlias = GenerateVideoCompleteResponse | GenerateVideoCancelledResponse
+class GenerateVideoQueuedResponse(BaseModel):
+    """Returned when projectName ingest enqueues without blocking the HTTP request."""
+
+    status: Literal["queued"]
+    id: str
+
+
+GenerateVideoResponse: TypeAlias = (
+    GenerateVideoCompleteResponse | GenerateVideoCancelledResponse | GenerateVideoQueuedResponse
+)
 
 
 class GenerateImageCompleteResponse(BaseModel):
@@ -365,6 +379,40 @@ class StatusResponse(BaseModel):
     status: str
 
 
+class ProjectIngestJob(BaseModel):
+    id: str
+    projectName: str
+    video_path: str = ""
+    prompt: str
+    model: str
+    resolution: str
+    duration: float | None
+    fps: int
+    audio: bool
+    createdAt: float
+
+
+class ProjectIngestListResponse(BaseModel):
+    jobs: list[ProjectIngestJob]
+
+
+class ProjectIngestJobDetailResponse(BaseModel):
+    """Single ingest job lookup — includes video_url once the file is ready."""
+
+    id: str
+    projectName: str
+    video_path: str = ""
+    video_url: str | None = None
+    status: Literal["queued", "complete"]
+    prompt: str
+    model: str
+    resolution: str
+    duration: float | None
+    fps: int
+    audio: bool
+    createdAt: float
+
+
 class HTTPErrorResponse(BaseModel):
     code: str
     message: str
@@ -458,6 +506,7 @@ class GenerateVideoRequest(BaseModel):
     aspectRatio: Literal["16:9", "9:16"] = "16:9"
     seed: int | None = None
     loras: list[LoraEntry] = Field(default_factory=list[LoraEntry])
+    projectName: str | None = None
 
 
 class GenerateImageRequest(BaseModel):

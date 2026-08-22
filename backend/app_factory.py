@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import json
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,9 @@ from _routes.lora_catalog import router as lora_catalog_router
 from _routes.image_gen import router as image_gen_router
 from _routes.prompt_enhancement import router as prompt_enhancement_router
 from _routes.models import router as models_router
+from _routes.outputs import router as outputs_router
+from _routes.uploads import router as uploads_router
+from _routes.project_ingest import router as project_ingest_router
 from _routes.suggest_gap_prompt import router as suggest_gap_prompt_router
 from _routes.retake import router as retake_router
 from _routes.extend import router as extend_router
@@ -51,6 +55,41 @@ DEFAULT_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     },
 }
 
+_UNAUTHENTICATED_PATHS = frozenset({
+    "/docs",
+    "/docs/",
+    "/redoc",
+    "/redoc/",
+    "/openapi.json",
+    "/docs/oauth2-redirect",
+})
+
+
+def _looks_like_json(body: bytes) -> bool:
+    stripped = body.lstrip()
+    return stripped.startswith(b"{") or stripped.startswith(b"[")
+
+
+def _strict_json_bytes(body: bytes) -> bytes | None:
+    """Re-encode JSON that contains raw control characters inside strings (curl $'...\\n...')."""
+    try:
+        json.loads(body)
+        return body
+    except json.JSONDecodeError:
+        pass
+    try:
+        parsed: object = json.loads(body, strict=False)
+    except json.JSONDecodeError:
+        return None
+    return json.dumps(parsed, ensure_ascii=False).encode("utf-8")
+
+
+def _replace_header(headers: list[tuple[bytes, bytes]], name: bytes, value: bytes) -> list[tuple[bytes, bytes]]:
+    lowered = name.lower()
+    replaced = [(key, val) for key, val in headers if key.lower() != lowered]
+    replaced.append((name, value))
+    return replaced
+
 
 def create_app(
     *,
@@ -58,6 +97,7 @@ def create_app(
     allowed_origins: list[str] | None = None,
     title: str = "LTX-2 Video Generation Server",
     auth_token: str = "",
+    api_token: str = "",
     admin_token: str = "",
 ) -> FastAPI:
     """Create a configured FastAPI app bound to the provided handler."""
@@ -72,19 +112,30 @@ def create_app(
         allow_headers=["*"],
     )
 
+    secrets = tuple(token for token in (auth_token, api_token) if token)
+
     @app.middleware("http")
     async def _auth_middleware(  # pyright: ignore[reportUnusedFunction]
         request: Request,
         call_next: Callable[[Request], Awaitable[StarletteResponse]],
     ) -> StarletteResponse:
-        if not auth_token:
+        if not secrets:
             return await call_next(request)
         if request.method == "OPTIONS":
             return await call_next(request)
         if request.url.path == "/api/auth/huggingface/callback":
             return await call_next(request)
+        if request.url.path in _UNAUTHENTICATED_PATHS:
+            return await call_next(request)
         def _token_matches(candidate: str) -> bool:
-            return hmac.compare_digest(candidate, auth_token)
+            matched = False
+            for secret in secrets:
+                try:
+                    if hmac.compare_digest(candidate, secret):
+                        matched = True
+                except (TypeError, ValueError):
+                    pass
+            return matched
 
         # WebSocket: check query param
         if request.headers.get("upgrade", "").lower() == "websocket":
@@ -110,6 +161,30 @@ def create_app(
             status_code=401,
             content=build_http_error_response(401, "Unauthorized").model_dump(),
         )
+
+    @app.middleware("http")
+    async def _coerce_json_content_type(  # pyright: ignore[reportUnusedFunction]
+        request: Request,
+        call_next: Callable[[Request], Awaitable[StarletteResponse]],
+    ) -> StarletteResponse:
+        # curl --data-raw defaults to application/x-www-form-urlencoded; if the body is JSON,
+        # treat it as JSON so Pydantic receives a dict instead of raw bytes.
+        if request.method in {"POST", "PUT", "PATCH"}:
+            body = await request.body()
+            if _looks_like_json(body):
+                headers = list(request.scope["headers"])
+                content_type = request.headers.get("content-type", "")
+                if "application/json" not in content_type.lower():
+                    headers = _replace_header(headers, b"content-type", b"application/json")
+                normalized = _strict_json_bytes(body)
+                if normalized is not None and normalized != body:
+                    # Starlette caches the first body() read; replace it with strict JSON.
+                    setattr(request, "_body", normalized)
+                    headers = _replace_header(
+                        headers, b"content-length", str(len(normalized)).encode("ascii")
+                    )
+                request.scope["headers"] = headers
+        return await call_next(request)
 
     async def _route_http_error_handler(request: Request, exc: Exception) -> JSONResponse:
         if isinstance(exc, HTTPError):
@@ -156,6 +231,9 @@ def create_app(
 
     app.include_router(health_router)
     app.include_router(generation_router)
+    app.include_router(outputs_router)
+    app.include_router(uploads_router)
+    app.include_router(project_ingest_router)
     app.include_router(models_router)
     app.include_router(settings_router)
     app.include_router(image_gen_router)
@@ -167,5 +245,23 @@ def create_app(
     app.include_router(prompt_enhancement_router)
     app.include_router(runtime_policy_router)
     app.include_router(hf_auth_router)
+
+    _default_openapi = app.openapi
+
+    def custom_openapi() -> dict[str, Any]:
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = _default_openapi()
+        components = schema.setdefault("components", {})
+        security_schemes = components.setdefault("securitySchemes", {})
+        security_schemes["HTTPBearer"] = {
+            "type": "http",
+            "scheme": "bearer",
+        }
+        schema["security"] = [{"HTTPBearer": []}]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = custom_openapi  # type: ignore[method-assign]
 
     return app

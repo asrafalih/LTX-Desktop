@@ -14,6 +14,9 @@ from handlers import (
     IcLoraHandler,
     ImageGenerationHandler,
     ModelsHandler,
+    OutputsHandler,
+    UploadsHandler,
+    ProjectIngestHandler,
     PipelinesHandler,
     LoraCatalogHandler,
     PromptEnhancementHandler,
@@ -186,6 +189,8 @@ class AppHandler:
             config=config,
         )
 
+        self.project_ingest = ProjectIngestHandler(config=config)
+
         self.video_generation = VideoGenerationHandler(
             state=self.state,
             lock=self._lock,
@@ -195,6 +200,7 @@ class AppHandler:
             prompt_enhancement_handler=self.prompt_enhancement,
             ltx_api_client=ltx_api_client,
             config=config,
+            project_ingest_handler=self.project_ingest,
         )
 
         self.image_generation = ImageGenerationHandler(
@@ -215,6 +221,8 @@ class AppHandler:
         )
 
         self.runtime_policy = RuntimePolicyHandler(config=config)
+        self.outputs = OutputsHandler(config=config)
+        self.uploads = UploadsHandler(config=config)
 
         self.suggest_gap_prompt = SuggestGapPromptHandler(
             state=self.state,

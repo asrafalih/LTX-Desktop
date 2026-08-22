@@ -179,7 +179,7 @@ Used for AI prompt suggestions (timeline gap fill) and, as an alternative to the
 LTX Desktop is split into three main layers:
 
 - **Renderer (`frontend/`)**: TypeScript + React UI.
-  - Calls the local backend over HTTP at `http://localhost:8000`.
+  - Calls the local backend over HTTP at `http://localhost:41954`.
   - Talks to Electron via the preload bridge (`window.electronAPI`).
 - **Electron (`electron/`)**: TypeScript main process + preload.
   - Owns app lifecycle and OS integration (file dialogs, native export via ffmpeg, starting/managing the Python backend).
@@ -190,7 +190,7 @@ LTX Desktop is split into three main layers:
 
 ```mermaid
 graph TD
-  UI["Renderer (React + TS)"] -->|HTTP: localhost:8000| BE["Backend (FastAPI + Python)"]
+  UI["Renderer (React + TS)"] -->|HTTP: localhost:41954| BE["Backend (FastAPI + Python)"]
   UI -->|IPC via preload: window.electronAPI| EL["Electron main (TS)"]
   EL --> OS["OS integration (files, dialogs, ffmpeg, process mgmt)"]
   BE --> GPU["Local models + GPU (when supported)"]
@@ -251,6 +251,22 @@ tests, cold-start latency, VRAM-fit-per-GPU, output-integrity, and a full
 feature-surface sanity sweep, all against the same backend the app ships. See
 [`backend/performance_runner/README.md`](backend/performance_runner/README.md).
 
+### Headless API (local / LAN)
+
+Run the backend without Electron (reuses the app’s models/settings directory):
+
+```bash
+LTX_API_TOKEN=your-stable-token pnpm backend:serve
+```
+
+- Docs UI: `http://127.0.0.1:41954/docs` (no token required to view; Authorize with the Bearer token to try endpoints)
+- API calls need `Authorization: Bearer $LTX_API_TOKEN`
+- LAN: `LTX_BIND_HOST=0.0.0.0 LTX_API_TOKEN=… pnpm backend:serve` then use `http://<machine-lan-ip>:41954`
+- Do not run `backend:serve` while the desktop app is already using the same port
+- Curl cookbook: [`docs/api-curl.md`](docs/api-curl.md)
+
+With the desktop app running, the same env vars work if set before launch (`LTX_API_TOKEN`, `LTX_BIND_HOST`, `LTX_PORT`); Electron still generates a session token for the UI.
+
 Building installers:
 - See [`INSTALLER.md`](docs/INSTALLER.md)
 
@@ -264,6 +280,7 @@ LTX Desktop collects minimal, anonymous usage analytics (app version, platform, 
 - [`TELEMETRY.md`](docs/TELEMETRY.md) — telemetry and privacy
 - [`backend/architecture.md`](backend/architecture.md) — backend architecture
 - [`backend/performance_runner/README.md`](backend/performance_runner/README.md) — performance & validation harness
+- [`docs/api-curl.md`](docs/api-curl.md) — headless/LAN API curl examples
 
 ## Changelog
 

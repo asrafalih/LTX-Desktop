@@ -72,3 +72,72 @@ def test_websocket_with_token_query_param(test_state):
         )
         # The route may not exist, but auth should pass (not 401)
         assert response.status_code != 401
+
+
+def test_session_or_api_token_both_accepted(test_state):
+    app = create_app(handler=test_state, auth_token="session-secret", api_token="lan-secret")
+    with TestClient(app) as client:
+        session = client.get("/health", headers={"Authorization": "Bearer session-secret"})
+        assert session.status_code == 200
+        lan = client.get("/health", headers={"Authorization": "Bearer lan-secret"})
+        assert lan.status_code == 200
+        wrong = client.get("/health", headers={"Authorization": "Bearer other-secret"})
+        assert_http_error(wrong, status_code=401, code="HTTP_401", message="Unauthorized")
+
+
+def test_api_token_only_accepted(test_state):
+    app = create_app(handler=test_state, auth_token="", api_token="lan-secret")
+    with TestClient(app) as client:
+        ok = client.get("/health", headers={"Authorization": "Bearer lan-secret"})
+        assert ok.status_code == 200
+        missing = client.get("/health")
+        assert_http_error(missing, status_code=401, code="HTTP_401", message="Unauthorized")
+
+
+def test_docs_and_openapi_are_public_when_auth_configured(test_state):
+    app = create_app(handler=test_state, auth_token="test-secret")
+    with TestClient(app) as client:
+        docs = client.get("/docs")
+        assert docs.status_code == 200
+        openapi = client.get("/openapi.json")
+        assert openapi.status_code == 200
+        redoc = client.get("/redoc")
+        assert redoc.status_code == 200
+
+
+def test_api_still_requires_token_when_docs_are_public(test_state):
+    app = create_app(handler=test_state, auth_token="test-secret")
+    with TestClient(app) as client:
+        response = client.get("/health")
+        assert_http_error(response, status_code=401, code="HTTP_401", message="Unauthorized")
+        ok = client.get("/health", headers={"Authorization": "Bearer test-secret"})
+        assert ok.status_code == 200
+
+
+def test_openapi_declares_http_bearer(test_state):
+    app = create_app(handler=test_state, auth_token="test-secret")
+    schema = app.openapi()
+    schemes = schema["components"]["securitySchemes"]
+    assert schemes["HTTPBearer"]["type"] == "http"
+    assert schemes["HTTPBearer"]["scheme"] == "bearer"
+    assert {"HTTPBearer": []} in schema.get("security", [])
+
+
+def test_lan_cors_allows_any_origin(test_state):
+    from runtime_config.port_constant import allowed_origins_for_bind
+
+    app = create_app(
+        handler=test_state,
+        auth_token="test-secret",
+        allowed_origins=allowed_origins_for_bind("0.0.0.0"),
+    )
+    with TestClient(app) as client:
+        r = client.get(
+            "/health",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "Origin": "http://192.168.1.50:3000",
+            },
+        )
+        assert r.status_code == 200
+        assert r.headers.get("access-control-allow-origin") in {"*", "http://192.168.1.50:3000"}

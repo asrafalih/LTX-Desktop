@@ -164,7 +164,13 @@ if use_sage_attention:
 # Constants & Paths
 # ============================================================
 
-from runtime_config.port_constant import PORT
+from runtime_config.port_constant import (
+    PORT,
+    advertise_bind_host,
+    allowed_origins_for_bind,
+    assert_lan_bind_has_auth,
+    resolve_bind_host,
+)
 
 
 def _get_device() -> torch.device:
@@ -211,7 +217,7 @@ SETTINGS_FILE = SETTINGS_DIR / "settings.json"
 
 DEFAULT_APP_SETTINGS = AppSettings()
 
-from app_factory import DEFAULT_ALLOWED_ORIGINS, create_app
+from app_factory import create_app
 from state import RuntimeConfig, build_initial_state
 from runtime_config.runtime_policy import LocalGenerationMode, decide_local_generation_mode
 from server_utils.model_layout_migration import migrate_legacy_models_layout
@@ -292,10 +298,19 @@ runtime_config = RuntimeConfig(
 
 handler = build_initial_state(runtime_config, DEFAULT_APP_SETTINGS)
 
+bind_host = resolve_bind_host(os.environ.get("LTX_BIND_HOST"))
+
 auth_token = os.environ.get("LTX_AUTH_TOKEN", "")
+api_token = os.environ.get("LTX_API_TOKEN", "")
 admin_token = os.environ.get("LTX_ADMIN_TOKEN", "")
 
-app = create_app(handler=handler, allowed_origins=DEFAULT_ALLOWED_ORIGINS, auth_token=auth_token, admin_token=admin_token)
+app = create_app(
+    handler=handler,
+    allowed_origins=allowed_origins_for_bind(bind_host),
+    auth_token=auth_token,
+    api_token=api_token,
+    admin_token=admin_token,
+)
 
 
 def precache_model_files(model_dir: Path) -> int:
@@ -341,9 +356,12 @@ if __name__ == "__main__":
     import uvicorn
 
     port = runtime_config.backend_port
+    advertise_host = advertise_bind_host(bind_host)
+    assert_lan_bind_has_auth(bind_host, auth_token, api_token)
     logger.info("=" * 60)
     logger.info("LTX-2 Video Generation Server (FastAPI + Uvicorn)")
     log_hardware_info()
+    logger.info("Bind host: %s", bind_host)
     logger.info("=" * 60)
 
     # Use our root logging config so uvicorn logs go to stdout (not its
@@ -364,7 +382,7 @@ if __name__ == "__main__":
         },
     }
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info", access_log=False, log_config=log_config)
+    config = uvicorn.Config(app, host=bind_host, port=port, log_level="info", access_log=False, log_config=log_config)
     server = uvicorn.Server(config)
 
     _orig_startup = server.startup
@@ -372,8 +390,9 @@ if __name__ == "__main__":
     async def _startup_with_ready_msg(sockets: object = None) -> None:
         await _orig_startup(sockets=sockets)  # type: ignore[arg-type]
         if server.started:
-            # Machine-parseable ready message — Electron matches this line
-            print(f"Server running on http://127.0.0.1:{port}", flush=True)
+            # Machine-parseable ready message — Electron matches this line.
+            # Advertise loopback when bound to 0.0.0.0 so the desktop app can probe it.
+            print(f"Server running on http://{advertise_host}:{port}", flush=True)
 
     server.startup = _startup_with_ready_msg  # type: ignore[assignment]
 
