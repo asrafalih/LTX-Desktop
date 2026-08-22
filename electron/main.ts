@@ -24,10 +24,11 @@ function logAppVersion(): void {
 }
 
 // Single-instance lock is keyed off userData. A second checkout (different
-// LTX_APP_FOLDER_NAME / LTX_USER_DATA_DIR) gets its own lock. In unpackaged
-// multi-instance runs that still share userData, opt in with LTX_ALLOW_MULTI_INSTANCE=1.
+// LTX_APP_FOLDER_NAME / LTX_USER_DATA_DIR) gets its own lock. Parallel / multi
+// instance in unpackaged runs: LTX_PARALLEL_DEV=1 or LTX_ALLOW_MULTI_INSTANCE=1.
 const allowMultiInstance =
-  !app.isPackaged && process.env.LTX_ALLOW_MULTI_INSTANCE === '1'
+  !app.isPackaged
+  && (process.env.LTX_ALLOW_MULTI_INSTANCE === '1' || process.env.LTX_PARALLEL_DEV === '1')
 const gotLock = allowMultiInstance || app.requestSingleInstanceLock()
 
 if (!gotLock) {

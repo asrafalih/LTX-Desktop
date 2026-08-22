@@ -2,7 +2,10 @@ import { app } from 'electron'
 import path from 'path'
 import os from 'os'
 
-export const APP_FOLDER_NAME = process.env.LTX_APP_FOLDER_NAME || 'LTXDesktop'
+const parallelDev = process.env.LTX_PARALLEL_DEV === '1'
+export const APP_FOLDER_NAME =
+  process.env.LTX_APP_FOLDER_NAME
+  || (parallelDev ? 'LTXDesktop-Dev' : 'LTXDesktop')
 
 function resolveUserDataPath(): string {
   const override = process.env.LTX_USER_DATA_DIR?.trim()

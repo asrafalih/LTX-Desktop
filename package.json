@@ -15,8 +15,10 @@
   "scripts": {
     "setup:dev": "node scripts/run-script.js scripts/setup-dev",
     "clean:dev": "node scripts/run-script.js scripts/clean-dev",
-    "dev": "cross-env LTX_PORT=41955 LTX_APP_FOLDER_NAME=LTXDesktop-Dev vite",
-    "dev:debug": "cross-env LTX_PORT=41955 LTX_APP_FOLDER_NAME=LTXDesktop-Dev BACKEND_DEBUG=1 ELECTRON_DEBUG=1 vite",
+    "dev": "vite",
+    "dev:parallel": "cross-env LTX_PARALLEL_DEV=1 vite",
+    "dev:debug": "cross-env BACKEND_DEBUG=1 ELECTRON_DEBUG=1 vite",
+    "dev:parallel:debug": "cross-env LTX_PARALLEL_DEV=1 BACKEND_DEBUG=1 ELECTRON_DEBUG=1 vite",
     "perf:dev": "node scripts/perf-dev.mjs",
     "backend:serve": "node scripts/backend-serve.mjs",
     "typecheck": "concurrently \"pnpm run typecheck:ts\" \"pnpm run typecheck:py\"",
