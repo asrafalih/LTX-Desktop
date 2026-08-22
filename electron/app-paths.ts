@@ -2,9 +2,14 @@ import { app } from 'electron'
 import path from 'path'
 import os from 'os'
 
-export const APP_FOLDER_NAME = 'LTXDesktop'
+export const APP_FOLDER_NAME = process.env.LTX_APP_FOLDER_NAME || 'LTXDesktop'
 
 function resolveUserDataPath(): string {
+  const override = process.env.LTX_USER_DATA_DIR?.trim()
+  if (override) {
+    return path.resolve(override)
+  }
+
   if (process.platform === 'win32') {
     const localAppData = process.env.LOCALAPPDATA
       || path.join(os.homedir(), 'AppData', 'Local')

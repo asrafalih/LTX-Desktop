@@ -38,6 +38,8 @@ if TYPE_CHECKING:
 DEFAULT_ALLOWED_ORIGINS: list[str] = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
 ]
 
 DEFAULT_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {

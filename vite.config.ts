@@ -54,6 +54,11 @@ export default defineConfig({
     }
   },
   base: './',  // Use relative paths for Electron file:// protocol
+  // 5174 so this checkout can run beside another LTX Desktop on Vite's default 5173
+  server: {
+    port: 5174,
+    strictPort: true,
+  },
   build: {
     outDir: 'dist'
   }
