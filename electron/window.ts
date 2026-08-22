@@ -37,7 +37,7 @@ export function createWindow(): BrowserWindow {
 
   // Load the app
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
+    mainWindow.loadURL('http://localhost:5174')
     // DevTools can be opened manually with Ctrl+Shift+I or F12
   } else {
     mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))
