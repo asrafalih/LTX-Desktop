@@ -1179,6 +1179,24 @@
             "default": 5,
             "title": "Duration"
           },
+          "endImagePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endimagepath"
+          },
+          "endImageStrength": {
+            "default": 0.8,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Endimagestrength",
+            "type": "number"
+          },
           "fps": {
             "default": 24,
             "enum": [

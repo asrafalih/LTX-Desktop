@@ -1212,6 +1212,13 @@ export interface components {
              * @default 5
              */
             duration: (5 | 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20) | null;
+            /** Endimagepath */
+            endImagePath?: string | null;
+            /**
+             * Endimagestrength
+             * @default 0.8
+             */
+            endImageStrength: number;
             /**
              * Fps
              * @default 24
