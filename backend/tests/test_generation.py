@@ -2258,3 +2258,60 @@ class TestLocalEncodingEnhancement:
 
         assert fake_services.prompt_enhancer_pipeline.enhance_t2v_calls == []
         assert fake_services.text_encoder.encode_calls[0]["enhance_prompt"] is True
+
+
+class TestFlfValidation:
+    def test_end_image_without_start_returns_400(
+        self, client, test_state, create_fake_model_files, make_test_image, tmp_path
+    ):
+        _install_local_2_3(test_state, create_fake_model_files)
+        end = tmp_path / "end.png"
+        end.write_bytes(make_test_image().getvalue())
+        r = client.post(
+            "/api/generate",
+            json={**_T2V_JSON, "endImagePath": str(end), "endImageStrength": 0.7},
+        )
+        assert_http_error(r, status_code=400, code="END_IMAGE_REQUIRES_START")
+
+    def test_end_image_rejected_on_api_only_mode(
+        self, client, test_state, make_test_image, tmp_path
+    ):
+        # Same fixture pattern as test_i2v_routes_to_ltx_api
+        test_state.config.local_generations_mode = "unsupported"
+        test_state.state.app_settings.ltx_api_key = "api-key"
+        start = tmp_path / "start.png"
+        end = tmp_path / "end.png"
+        start.write_bytes(make_test_image().getvalue())
+        end.write_bytes(make_test_image().getvalue())
+        r = client.post(
+            "/api/generate",
+            json={
+                "prompt": "Animate this frame",
+                "resolution": "2160p",
+                "model": "pro",
+                "duration": 8,
+                "fps": 25,
+                "imagePath": str(start),
+                "endImagePath": str(end),
+            },
+        )
+        assert_http_error(r, status_code=400, code="END_IMAGE_LOCAL_ONLY")
+
+    def test_flf_rejects_auto_duration_in_generate(
+        self, test_state, create_fake_model_files, make_test_image, tmp_path
+    ):
+        _install_local_2_3(test_state, create_fake_model_files)
+        start = tmp_path / "start.png"
+        end = tmp_path / "end.png"
+        start.write_bytes(make_test_image().getvalue())
+        end.write_bytes(make_test_image().getvalue())
+        req = GenerateVideoRequest.model_validate({
+            **_T2V_JSON,
+            "duration": None,
+            "imagePath": str(start),
+            "endImagePath": str(end),
+        })
+        with pytest.raises(HTTPError) as exc:
+            test_state.video_generation.generate(req)
+        assert exc.value.status_code == 400
+        assert exc.value.code == "END_IMAGE_REQUIRES_DURATION"

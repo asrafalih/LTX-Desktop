@@ -187,6 +187,28 @@ class VideoGenerationHandler(StateHandlerBase):
             force_api_generations=self.config.force_api_generations,
             settings=self.state.app_settings,
         )
+
+        end_image_path = self._normalize_media_path(req.endImagePath)
+        if end_image_path is not None:
+            if self._normalize_media_path(req.imagePath) is None:
+                raise HTTPError(
+                    400,
+                    "END_IMAGE_REQUIRES_START",
+                    code="END_IMAGE_REQUIRES_START",
+                )
+            if use_api_specs:
+                raise HTTPError(
+                    400,
+                    "END_IMAGE_LOCAL_ONLY",
+                    code="END_IMAGE_LOCAL_ONLY",
+                )
+            if req.duration is None:
+                raise HTTPError(
+                    400,
+                    "END_IMAGE_REQUIRES_DURATION",
+                    code="END_IMAGE_REQUIRES_DURATION",
+                )
+
         validation_error = validate_generate_video_request(
             req,
             use_api_specs=use_api_specs,
