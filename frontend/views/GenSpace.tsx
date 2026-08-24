@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   Trash2, Download, Image, Video, X, Info,
   Heart, Film, Volume2, VolumeX, Sparkles, Sparkle,
-  Clock, Monitor, ChevronUp, Scissors, Music, Undo2, Redo2, Loader2,
+  Clock, Hourglass, Monitor, ChevronUp, Scissors, Music, Undo2, Redo2, Loader2,
   MoveHorizontal, Wand2, Square
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
@@ -295,10 +295,18 @@ function AssetCard({
                 {formatTime(currentTime)}
               </div>
               {generationDurationSec != null && (
-                <div className="px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1">
-                  <Clock className="h-3 w-3 opacity-80" />
-                  Generated in {formatGenerationDuration(generationDurationSec)}
-                </div>
+                <Tooltip
+                  content={`Generated in ${formatGenerationDuration(generationDurationSec)}`}
+                  side="top"
+                >
+                  <div
+                    className="px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1"
+                    aria-label={`Generated in ${formatGenerationDuration(generationDurationSec)}`}
+                  >
+                    <Hourglass className="h-3 w-3 opacity-80" />
+                    {formatGenerationDuration(generationDurationSec)}
+                  </div>
+                </Tooltip>
               )}
               <div className="flex items-center gap-1.5 rounded-lg bg-black/40 backdrop-blur-md pl-1.5 pr-2 py-1">
                 <button
@@ -334,10 +342,18 @@ function AssetCard({
           </div>
         )}
         {asset.type === 'image' && generationDurationSec != null && (
-          <div className="absolute bottom-2 left-2 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1">
-            <Clock className="h-3 w-3 opacity-80" />
-            Generated in {formatGenerationDuration(generationDurationSec)}
-          </div>
+          <Tooltip
+            content={`Generated in ${formatGenerationDuration(generationDurationSec)}`}
+            side="top"
+          >
+            <div
+              className="absolute bottom-2 left-2 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1"
+              aria-label={`Generated in ${formatGenerationDuration(generationDurationSec)}`}
+            >
+              <Hourglass className="h-3 w-3 opacity-80" />
+              {formatGenerationDuration(generationDurationSec)}
+            </div>
+          </Tooltip>
         )}
 
         {/* Delete button (subtle, bottom right) */}
