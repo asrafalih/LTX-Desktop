@@ -293,10 +293,16 @@ class VideoGenerationHandler(StateHandlerBase):
                 num_frames = self._compute_num_frames(duration, fps)
 
             image = None
+            end_image = None
             image_path = self._normalize_media_path(req.imagePath)
             if image_path:
                 image = self._prepare_image(image_path, width, height)
                 logger.info("Image: %s -> %sx%s", image_path, width, height)
+
+            end_path = self._normalize_media_path(req.endImagePath)
+            if end_path:
+                end_image = self._prepare_image(end_path, width, height)
+                logger.info("End image: %s -> %sx%s", end_path, width, height)
 
             try:
                 seed = req.seed if req.seed is not None else self._resolve_seed()
@@ -325,6 +331,8 @@ class VideoGenerationHandler(StateHandlerBase):
                     camera_motion=req.cameraMotion,
                     negative_prompt=req.negativePrompt,
                     loras=loras,
+                    end_image=end_image,
+                    end_image_strength=req.endImageStrength,
                 )
 
                 self._generation.complete_generation(output_path)
@@ -373,6 +381,8 @@ class VideoGenerationHandler(StateHandlerBase):
         camera_motion: VideoCameraMotion,
         negative_prompt: str,
         loras: list[tuple[str, float]] | None = None,
+        end_image: Image.Image | None = None,
+        end_image_strength: float = 0.8,
     ) -> str:
         t_total_start = time.perf_counter()
         gen_mode = "i2v" if image is not None else "t2v"
@@ -388,11 +398,30 @@ class VideoGenerationHandler(StateHandlerBase):
         total_steps = 8
 
         images: list[ImageConditioningInput] = []
-        temp_image_path: str | None = None
+        temp_image_paths: list[str] = []
         if image is not None:
-            temp_image_path = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
-            image.save(temp_image_path)
-            images = [ImageConditioningInput(path=temp_image_path, frame_idx=0, strength=1.0)]
+            temp_start = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+            image.save(temp_start)
+            temp_image_paths.append(temp_start)
+            images.append(ImageConditioningInput(path=temp_start, frame_idx=0, strength=1.0))
+
+        if end_image is not None:
+            if not isinstance(num_frames, int):
+                raise HTTPError(
+                    400,
+                    "END_IMAGE_REQUIRES_DURATION",
+                    code="END_IMAGE_REQUIRES_DURATION",
+                )
+            temp_end = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+            end_image.save(temp_end)
+            temp_image_paths.append(temp_end)
+            images.append(
+                ImageConditioningInput(
+                    path=temp_end,
+                    frame_idx=num_frames - 1,
+                    strength=end_image_strength,
+                )
+            )
 
         output_path = self._make_output_path()
 
@@ -454,8 +483,9 @@ class VideoGenerationHandler(StateHandlerBase):
             return str(output_path)
         finally:
             self._text.clear_api_embeddings()
-            if temp_image_path and os.path.exists(temp_image_path):
-                os.unlink(temp_image_path)
+            for path in temp_image_paths:
+                if os.path.exists(path):
+                    os.unlink(path)
 
     def _generate_a2v(
         self,
@@ -485,10 +515,15 @@ class VideoGenerationHandler(StateHandlerBase):
         num_frames = self._compute_num_frames(duration, fps)
 
         image = None
-        temp_image_path: str | None = None
+        end_image = None
+        temp_image_paths: list[str] = []
         image_path = self._normalize_media_path(req.imagePath)
         if image_path:
             image = self._prepare_image(image_path, width, height)
+
+        end_path = self._normalize_media_path(req.endImagePath)
+        if end_path:
+            end_image = self._prepare_image(end_path, width, height)
 
         seed = req.seed if req.seed is not None else self._resolve_seed()
         loras = self._resolve_loras(req.loras)
@@ -498,9 +533,21 @@ class VideoGenerationHandler(StateHandlerBase):
 
             images: list[ImageConditioningInput] = []
             if image is not None:
-                temp_image_path = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
-                image.save(temp_image_path)
-                images = [ImageConditioningInput(path=temp_image_path, frame_idx=0, strength=1.0)]
+                temp_start = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+                image.save(temp_start)
+                temp_image_paths.append(temp_start)
+                images.append(ImageConditioningInput(path=temp_start, frame_idx=0, strength=1.0))
+            if end_image is not None:
+                temp_end = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+                end_image.save(temp_end)
+                temp_image_paths.append(temp_end)
+                images.append(
+                    ImageConditioningInput(
+                        path=temp_end,
+                        frame_idx=num_frames - 1,
+                        strength=req.endImageStrength,
+                    )
+                )
 
             # Same ordering rule as the fast path: enhance before the pipeline takes the GPU
             # (and so before start_generation, which requires a pipeline to already be loaded).
@@ -564,8 +611,9 @@ class VideoGenerationHandler(StateHandlerBase):
             raise HTTPError(500, str(e)) from e
         finally:
             self._text.clear_api_embeddings()
-            if temp_image_path and os.path.exists(temp_image_path):
-                os.unlink(temp_image_path)
+            for path in temp_image_paths:
+                if os.path.exists(path):
+                    os.unlink(path)
 
     def _prepare_image(self, image_path: str, width: int, height: int) -> Image.Image:
         validated_path = validate_image_file(image_path)

@@ -2315,3 +2315,75 @@ class TestFlfValidation:
             test_state.video_generation.generate(req)
         assert exc.value.status_code == 400
         assert exc.value.code == "END_IMAGE_REQUIRES_DURATION"
+
+
+class TestFlfConditioning:
+    def test_i2v_passes_start_and_end_conditioning(
+        self, client, test_state, fake_services, create_fake_model_files, make_test_image, tmp_path
+    ):
+        _install_local_2_3(test_state, create_fake_model_files)
+        start = tmp_path / "start.png"
+        end = tmp_path / "end.png"
+        start.write_bytes(make_test_image().getvalue())
+        end.write_bytes(make_test_image().getvalue())
+        r = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "imagePath": str(start),
+                "endImagePath": str(end),
+                "endImageStrength": 0.65,
+            },
+        )
+        assert r.status_code == 200
+        call = fake_services.fast_video_pipeline.generate_calls[0]
+        images = call["images"]
+        assert len(images) == 2
+        assert images[0].frame_idx == 0
+        assert images[0].strength == 1.0
+        expected_frames = test_state.video_generation._compute_num_frames(5, 24)
+        assert images[1].frame_idx == expected_frames - 1
+        assert images[1].strength == 0.65
+
+    def test_a2v_passes_start_and_end_conditioning(
+        self, client, test_state, fake_services, create_fake_model_files, make_test_image, tmp_path
+    ):
+        create_fake_model_files()
+        _enable_local_text_encoding(test_state)
+        start = tmp_path / "start.png"
+        end = tmp_path / "end.png"
+        audio = tmp_path / "a.wav"
+        start.write_bytes(make_test_image().getvalue())
+        end.write_bytes(make_test_image().getvalue())
+        _write_test_wav(audio)
+        r = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "imagePath": str(start),
+                "endImagePath": str(end),
+                "endImageStrength": 0.9,
+                "audioPath": str(audio),
+            },
+        )
+        assert r.status_code == 200
+        call = fake_services.a2v_pipeline.generate_calls[0]
+        images = call["images"]
+        assert len(images) == 2
+        assert images[0].frame_idx == 0 and images[0].strength == 1.0
+        expected_frames = test_state.video_generation._compute_num_frames(5, 24)
+        assert images[1].frame_idx == expected_frames - 1
+        assert images[1].strength == 0.9
+
+    def test_i2v_start_only_still_single_conditioning(
+        self, client, test_state, fake_services, create_fake_model_files, make_test_image, tmp_path
+    ):
+        _install_local_2_3(test_state, create_fake_model_files)
+        start = tmp_path / "start.png"
+        start.write_bytes(make_test_image().getvalue())
+        r = client.post("/api/generate", json={**_T2V_JSON, "imagePath": str(start)})
+        assert r.status_code == 200
+        images = fake_services.fast_video_pipeline.generate_calls[0]["images"]
+        assert len(images) == 1
+        assert images[0].frame_idx == 0
+        assert images[0].strength == 1.0
