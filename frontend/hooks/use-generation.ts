@@ -7,6 +7,7 @@ import { getProjectIngestJobs, isIngestJobKnown } from '../lib/project-ingest-jo
 import { useAppSettings } from '../contexts/AppSettingsContext'
 import { useProjects } from '../contexts/ProjectContext'
 import { composeProjectPrompt } from '../lib/compose-project-prompt'
+import { applyFlfFields } from '../lib/flf-generate-body'
 
 const POLLING_INTERVAL_MS = 2000
 
@@ -22,6 +23,8 @@ export interface GenerationRecoveryContext {
   // prefers it over `settings.model` (which defaults to 'fast' when absent).
   model?: string
   inputImageUrl?: string
+  endImageUrl?: string
+  endImageStrength?: number
   inputAudioUrl?: string
   genType?: 'image' | 'enhance'
   // Written by useProjectIngestWatcher for projectName generates. Prompt lives on queue cards;
@@ -73,7 +76,15 @@ type GenerateVideoRequest = ApiRequestBodyOf<'generateVideo'>
 type GenerateImageRequest = ApiRequestBodyOf<'generateImage'>
 
 interface UseGenerationReturn extends GenerationState {
-  generate: (prompt: string, imagePath: string | null, settings: GenerationSettings, audioPath?: string | null, projectName?: string | null) => Promise<void>
+  generate: (
+    prompt: string,
+    imagePath: string | null,
+    settings: GenerationSettings,
+    audioPath?: string | null,
+    projectName?: string | null,
+    endImagePath?: string | null,
+    endImageStrength?: number,
+  ) => Promise<void>
   generateImage: (prompt: string, settings: GenerationSettings, editSource?: string | null) => Promise<void>
   cancel: () => void
   reset: () => void
@@ -224,6 +235,8 @@ export function useGeneration(): UseGenerationReturn {
     settings: GenerationSettings,
     audioPath?: string | null,
     projectName?: string | null,
+    endImagePath?: string | null,
+    endImageStrength?: number,
   ) => {
     const statusMsg = settings.model.startsWith('pro')
       ? 'Loading Pro model & generating...'
@@ -266,6 +279,7 @@ export function useGeneration(): UseGenerationReturn {
         if (imagePath) {
           body.imagePath = imagePath
         }
+        applyFlfFields(body, imagePath, endImagePath, endImageStrength)
         if (audioPath) {
           body.audioPath = audioPath
         }

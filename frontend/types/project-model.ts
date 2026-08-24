@@ -69,6 +69,8 @@ export const generationParamsSchema = z.object({
   imageSteps: z.number().optional(),
   imageEditStrength: z.number().optional(),
   inputImageUrl: z.string().optional(),
+  endImageUrl: z.string().optional(),
+  endImageStrength: z.number().optional(),
   inputAudioUrl: z.string().optional(),
   retakeVideoPath: z.string().optional(),
   retakeStartTime: z.number().optional(),
