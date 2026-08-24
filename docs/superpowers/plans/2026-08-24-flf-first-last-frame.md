@@ -108,8 +108,6 @@ class TestFlfValidation:
         assert exc.value.code == "END_IMAGE_REQUIRES_DURATION"
 ```
 
-Run FLF checks in `generate()` **before** `validate_generate_video_request` so auto-duration still surfaces `END_IMAGE_REQUIRES_DURATION` even when the model would otherwise reject `duration=None`.
-
 - [ ] **Step 2: Run tests — expect fail**
 
 ```bash
