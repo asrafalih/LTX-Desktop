@@ -7,6 +7,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 from typing import Literal
 
 from api_types import GenerateVideoRequest
@@ -47,6 +48,7 @@ class GenerateQueueStore:
     def __init__(self, db_path: Path) -> None:
         self._path = db_path
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = RLock()
         self._conn = self._connect()
 
     def _connect(self) -> sqlite3.Connection:
@@ -55,7 +57,9 @@ class GenerateQueueStore:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
-            conn.commit()
+            # executescript leaves no open transaction; ignore empty commit.
+            if conn.in_transaction:
+                conn.commit()
             return conn
         except sqlite3.Error:
             logger.exception("Corrupt generate queue DB at %s — recreating", self._path)
@@ -67,21 +71,23 @@ class GenerateQueueStore:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
-            conn.commit()
+            if conn.in_transaction:
+                conn.commit()
             return conn
 
     def insert_queued(self, job_id: str, req: GenerateVideoRequest) -> None:
         now = time.time()
         project_name = (req.projectName or "").strip()
-        self._conn.execute(
-            """
-            INSERT INTO generate_jobs
-                (id, request_json, status, project_name, video_path, error, created_at, updated_at)
-            VALUES (?, ?, 'queued', ?, '', NULL, ?, ?)
-            """,
-            (job_id, req.model_dump_json(), project_name, now, now),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO generate_jobs
+                    (id, request_json, status, project_name, video_path, error, created_at, updated_at)
+                VALUES (?, ?, 'queued', ?, '', NULL, ?, ?)
+                """,
+                (job_id, req.model_dump_json(), project_name, now, now),
+            )
+            self._conn.commit()
 
     def set_status(
         self,
@@ -92,56 +98,60 @@ class GenerateQueueStore:
         error: str | None = None,
     ) -> None:
         now = time.time()
-        if video_path is not None:
-            self._conn.execute(
-                """
-                UPDATE generate_jobs
-                SET status = ?, video_path = ?, error = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (status, video_path, error, now, job_id),
-            )
-        else:
-            self._conn.execute(
-                """
-                UPDATE generate_jobs
-                SET status = ?, error = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (status, error, now, job_id),
-            )
-        self._conn.commit()
+        with self._lock:
+            if video_path is not None:
+                self._conn.execute(
+                    """
+                    UPDATE generate_jobs
+                    SET status = ?, video_path = ?, error = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (status, video_path, error, now, job_id),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    UPDATE generate_jobs
+                    SET status = ?, error = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (status, error, now, job_id),
+                )
+            self._conn.commit()
 
     def get(self, job_id: str) -> GenerateJobRecord | None:
-        row = self._conn.execute(
-            "SELECT * FROM generate_jobs WHERE id = ?", (job_id,)
-        ).fetchone()
-        return None if row is None else self._row_to_record(row)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM generate_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            return None if row is None else self._row_to_record(row)
 
     def list_incomplete(self) -> list[GenerateJobRecord]:
-        rows = self._conn.execute(
-            """
-            SELECT * FROM generate_jobs
-            WHERE status IN ('queued', 'running')
-            ORDER BY created_at ASC, id ASC
-            """
-        ).fetchall()
-        return [self._row_to_record(row) for row in rows]
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM generate_jobs
+                WHERE status IN ('queued', 'running')
+                ORDER BY created_at ASC, id ASC
+                """
+            ).fetchall()
+            return [self._row_to_record(row) for row in rows]
 
     def incomplete_ids(self) -> set[str]:
         return {job.id for job in self.list_incomplete()}
 
     def reset_running_to_queued(self) -> None:
         now = time.time()
-        self._conn.execute(
-            """
-            UPDATE generate_jobs
-            SET status = 'queued', updated_at = ?
-            WHERE status = 'running'
-            """,
-            (now,),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE generate_jobs
+                SET status = 'queued', updated_at = ?
+                WHERE status = 'running'
+                """,
+                (now,),
+            )
+            self._conn.commit()
 
     def _row_to_record(self, row: sqlite3.Row) -> GenerateJobRecord:
         return GenerateJobRecord(
