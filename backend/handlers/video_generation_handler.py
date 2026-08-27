@@ -182,7 +182,15 @@ class VideoGenerationHandler(StateHandlerBase):
         if normalize_project_name(req.projectName) is None:
             self._project_ingest.drop_if_incomplete(generation_id)
             return
-        self._queue_store.set_status(generation_id, status, error=error)
+        # Do not overwrite terminal cancelled/complete/failed.
+        if not self._queue_store.try_set_status(
+            generation_id,
+            status,
+            error=error,
+            only_if_in={"queued", "running"},
+        ):
+            self._project_ingest.drop_if_incomplete(generation_id)
+            return
         self._project_ingest.drop_if_incomplete(generation_id)
 
     def _complete_project_job(
@@ -190,12 +198,15 @@ class VideoGenerationHandler(StateHandlerBase):
     ) -> None:
         path_str = str(output_path)
         if normalize_project_name(req.projectName) is not None:
-            row = self._queue_store.get(generation_id)
-            # DELETE while running marks cancelled; do not resurrect as complete.
-            if row is not None and row.status == "cancelled":
+            # Atomic vs DELETE cancel: only rewrite ingest when status flipped to complete.
+            if not self._queue_store.try_set_status(
+                generation_id,
+                "complete",
+                video_path=path_str,
+                only_if_in={"queued", "running"},
+            ):
                 return
             self._project_ingest.enqueue_from_generate(req, path_str, generation_id)
-            self._queue_store.set_status(generation_id, "complete", video_path=path_str)
             return
         self._project_ingest.enqueue_from_generate(req, path_str, generation_id)
 
@@ -327,7 +338,9 @@ class VideoGenerationHandler(StateHandlerBase):
                 try:
                     self._queue_store.insert_queued(generation_id, req)
                 except Exception:
-                    self._queue.cancel_queued(generation_id)
+                    if not self._queue.cancel_queued(generation_id):
+                        # Worker already executing — stop orphan GPU work.
+                        self._generation.cancel_generation()
                     raise
                 self._project_ingest.begin_from_generate(req, generation_id)
                 return GenerateVideoQueuedResponse(status="queued", id=generation_id)
@@ -350,7 +363,11 @@ class VideoGenerationHandler(StateHandlerBase):
             settings=self.state.app_settings,
         )
         if normalize_project_name(req.projectName) is not None:
-            self._queue_store.set_status(generation_id, "running")
+            # DELETE may cancel after take / before GPU start; refuse to resurrect.
+            if not self._queue_store.try_set_status(
+                generation_id, "running", only_if_in={"queued", "running"}
+            ):
+                return GenerateVideoCancelledResponse(status="cancelled")
         if use_api_specs:
             return self._generate_forced_api(req, generation_id)
 

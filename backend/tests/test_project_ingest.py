@@ -697,3 +697,101 @@ def test_restart_resumes_incomplete_project_name_jobs(
             break
         time.sleep(0.05)
     assert completed >= {id1, id2}
+
+
+def test_complete_project_job_does_not_resurrect_cancelled(
+    test_state, create_fake_model_files
+) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    vg = test_state.video_generation
+    store = vg._queue_store
+    req = GenerateVideoRequest.model_validate(
+        {**_T2V_JSON, "prompt": "complete race", "projectName": "Moon landing"}
+    )
+    job_id = "comp0001"
+    store.insert_queued(job_id, req)
+    store.set_status(job_id, "running")
+    vg._project_ingest.begin_from_generate(req, job_id)
+    store.set_status(job_id, "cancelled")
+
+    vg._complete_project_job(req, job_id, "/tmp/should-not-apply.mp4")
+
+    row = store.get(job_id)
+    assert row is not None
+    assert row.status == "cancelled"
+    assert row.video_path == ""
+    listed = [j for j in vg._project_ingest.list_jobs().jobs if j.id == job_id]
+    assert all(not j.video_path for j in listed)
+
+
+def test_fail_project_job_does_not_overwrite_cancelled(
+    test_state, create_fake_model_files
+) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    vg = test_state.video_generation
+    store = vg._queue_store
+    req = GenerateVideoRequest.model_validate(
+        {**_T2V_JSON, "prompt": "fail race", "projectName": "Moon landing"}
+    )
+    job_id = "fail0001"
+    store.insert_queued(job_id, req)
+    store.set_status(job_id, "cancelled")
+
+    vg._fail_project_job(req, job_id, status="failed", error="gpu boom")
+
+    row = store.get(job_id)
+    assert row is not None
+    assert row.status == "cancelled"
+    assert row.error is None
+
+
+def test_run_queued_job_aborts_when_store_already_cancelled(
+    test_state, create_fake_model_files
+) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    vg = test_state.video_generation
+    store = vg._queue_store
+    req = GenerateVideoRequest.model_validate(
+        {**_T2V_JSON, "prompt": "abort cancelled", "projectName": "Moon landing"}
+    )
+    job_id = "abor0001"
+    store.insert_queued(job_id, req)
+    store.set_status(job_id, "cancelled")
+
+    result = vg._run_queued_job(req, job_id)
+
+    assert result.status == "cancelled"
+    row = store.get(job_id)
+    assert row is not None
+    assert row.status == "cancelled"
+
+
+def test_cancel_queued_covers_taken_before_execute() -> None:
+    from api_types import GenerateVideoRequest
+    from handlers.video_generate_queue import QueuedVideoGenerate, VideoGenerateQueue
+
+    q = VideoGenerateQueue(lambda _req, _jid: (_ for _ in ()).throw(AssertionError("must not run")))
+    req = GenerateVideoRequest.model_validate({**_T2V_JSON, "projectName": "Moon"})
+    job = QueuedVideoGenerate(job_id="take0001", req=req)
+    with q._cv:
+        q._running = job
+    assert q.cancel_queued("take0001") is True
+    assert job.cancelled is True
+    assert job.response is not None
+    assert job.response.status == "cancelled"
+
+
+def test_cancel_queued_leaves_executing_job_to_delete_path() -> None:
+    from handlers.video_generate_queue import QueuedVideoGenerate, VideoGenerateQueue
+
+    q = VideoGenerateQueue(lambda _req, _jid: (_ for _ in ()).throw(AssertionError("must not run")))
+    req = GenerateVideoRequest.model_validate({**_T2V_JSON, "projectName": "Moon"})
+    job = QueuedVideoGenerate(job_id="exec0001", req=req)
+    with q._cv:
+        q._running = job
+        q._executing = True
+    assert q.cancel_queued("exec0001") is False
+    assert job.cancelled is False

@@ -74,3 +74,58 @@ def test_corrupt_db_recreates_empty(tmp_path: Path) -> None:
     assert store.list_incomplete() == []
     store.insert_queued("new00001", _req())
     assert store.get("new00001") is not None
+
+
+def test_try_set_status_respects_only_if_in(tmp_path: Path) -> None:
+    store = GenerateQueueStore(tmp_path / "generate_queue.sqlite")
+    store.insert_queued("job00001", _req())
+    store.set_status("job00001", "cancelled")
+
+    assert (
+        store.try_set_status(
+            "job00001",
+            "complete",
+            video_path="/tmp/out.mp4",
+            only_if_in={"queued", "running"},
+        )
+        is False
+    )
+    row = store.get("job00001")
+    assert row is not None
+    assert row.status == "cancelled"
+    assert row.video_path == ""
+
+    store.insert_queued("job00002", _req())
+    store.set_status("job00002", "running")
+    assert (
+        store.try_set_status(
+            "job00002",
+            "complete",
+            video_path="/tmp/out.mp4",
+            only_if_in={"queued", "running"},
+        )
+        is True
+    )
+    done = store.get("job00002")
+    assert done is not None
+    assert done.status == "complete"
+    assert done.video_path == "/tmp/out.mp4"
+
+
+def test_try_set_status_failed_does_not_overwrite_cancelled(tmp_path: Path) -> None:
+    store = GenerateQueueStore(tmp_path / "generate_queue.sqlite")
+    store.insert_queued("job00003", _req())
+    store.set_status("job00003", "cancelled")
+    assert (
+        store.try_set_status(
+            "job00003",
+            "failed",
+            error="boom",
+            only_if_in={"queued", "running"},
+        )
+        is False
+    )
+    row = store.get("job00003")
+    assert row is not None
+    assert row.status == "cancelled"
+    assert row.error is None

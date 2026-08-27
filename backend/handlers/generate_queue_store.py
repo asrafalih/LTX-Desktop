@@ -119,6 +119,42 @@ class GenerateQueueStore:
                 )
             self._conn.commit()
 
+    def try_set_status(
+        self,
+        job_id: str,
+        status: GenerateJobStatus,
+        *,
+        video_path: str | None = None,
+        error: str | None = None,
+        only_if_in: set[str],
+    ) -> bool:
+        """Atomically update status only when current status is in ``only_if_in``."""
+        if not only_if_in:
+            return False
+        now = time.time()
+        placeholders = ",".join("?" for _ in only_if_in)
+        with self._lock:
+            if video_path is not None:
+                cur = self._conn.execute(
+                    f"""
+                    UPDATE generate_jobs
+                    SET status = ?, video_path = ?, error = ?, updated_at = ?
+                    WHERE id = ? AND status IN ({placeholders})
+                    """,
+                    (status, video_path, error, now, job_id, *only_if_in),
+                )
+            else:
+                cur = self._conn.execute(
+                    f"""
+                    UPDATE generate_jobs
+                    SET status = ?, error = ?, updated_at = ?
+                    WHERE id = ? AND status IN ({placeholders})
+                    """,
+                    (status, error, now, job_id, *only_if_in),
+                )
+            self._conn.commit()
+            return cur.rowcount > 0
+
     def get(self, job_id: str) -> GenerateJobRecord | None:
         with self._lock:
             row = self._conn.execute(
