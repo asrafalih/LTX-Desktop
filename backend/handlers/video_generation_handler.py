@@ -144,9 +144,24 @@ class VideoGenerationHandler(StateHandlerBase):
         self, req: GenerateVideoRequest, generation_id: str, output_path: str | Path
     ) -> None:
         path_str = str(output_path)
-        self._project_ingest.enqueue_from_generate(req, path_str, generation_id)
         if normalize_project_name(req.projectName) is not None:
+            row = self._queue_store.get(generation_id)
+            # DELETE while running marks cancelled; do not resurrect as complete.
+            if row is not None and row.status == "cancelled":
+                return
+            self._project_ingest.enqueue_from_generate(req, path_str, generation_id)
             self._queue_store.set_status(generation_id, "complete", video_path=path_str)
+            return
+        self._project_ingest.enqueue_from_generate(req, path_str, generation_id)
+
+    def mark_ingest_deleted(self, job_id: str) -> None:
+        """Cancel queued job or mark incomplete SQLite cancelled, then drop ingest JSON."""
+        if self.cancel_queued(job_id):
+            return
+        row = self._queue_store.get(job_id)
+        if row is not None and row.status in ("queued", "running"):
+            self._queue_store.set_status(job_id, "cancelled")
+        self._project_ingest.delete_job(job_id)
 
     def _normalize_media_path(self, value: str | None) -> str | None:
         normalized = normalize_optional_path(value)
