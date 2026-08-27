@@ -119,9 +119,24 @@ class VideoGenerationHandler(StateHandlerBase):
         self._project_ingest = project_ingest_handler
         self._queue_store = GenerateQueueStore(config.app_data_dir / "generate_queue.sqlite")
         self._queue = VideoGenerateQueue(self._run_queued_job)
-        # Incomplete ingest files outlive the in-memory queue across process death.
-        # Resume from SQLite comes in Task 3 — keep existing reconcile for now.
+        self._resume_durable_queue()
         self.reconcile_project_ingest()
+
+    def _resume_durable_queue(self) -> None:
+        self._queue_store.reset_running_to_queued()
+        live = self._queue.live_job_ids()
+        for record in self._queue_store.list_incomplete():
+            if record.id in live:
+                continue
+            self._project_ingest.begin_from_generate(record.request, record.id)
+            try:
+                self._queue.enqueue(record.id, record.request)
+            except HTTPError as exc:
+                if exc.status_code == 429:
+                    logger.error("Could not resume job %s: queue full", record.id)
+                    break
+                raise
+            live.add(record.id)
 
     def reconcile_project_ingest(self) -> None:
         self._project_ingest.drop_orphaned_incomplete(self._queue.live_job_ids())

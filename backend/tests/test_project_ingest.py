@@ -587,3 +587,75 @@ def test_queue_full_does_not_insert_sqlite(
         ):
             break
         time.sleep(0.05)
+
+
+def test_restart_resumes_incomplete_project_name_jobs(
+    test_state, fake_services, create_fake_model_files
+) -> None:
+    """Simulate process death: durable SQLite rows + empty in-memory queue → new handler resumes."""
+    from app_handler import ServiceBundle
+    from state import build_initial_state, set_state_service_for_tests
+    from state.app_settings import AppSettings
+    from state.app_state_types import HfAuthenticated
+
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+
+    id1, id2 = "resume001", "resume002"
+    store = test_state.video_generation._queue_store
+    store.insert_queued(
+        id1,
+        GenerateVideoRequest.model_validate(
+            {**_T2V_JSON, "prompt": "first", "projectName": "Alpha"}
+        ),
+    )
+    store.insert_queued(
+        id2,
+        GenerateVideoRequest.model_validate(
+            {**_T2V_JSON, "prompt": "second", "projectName": "Beta"}
+        ),
+    )
+    store.set_status(id1, "running")
+    assert test_state.video_generation._queue.live_job_ids() == set()
+
+    # Pretend process died: SQLite retained; rebuild AppHandler with same app_data_dir.
+    bundle = ServiceBundle(
+        http=fake_services.http,
+        gpu_cleaner=fake_services.gpu_cleaner,
+        model_downloader=fake_services.model_downloader,
+        lora_catalog_provider=fake_services.lora_catalog_provider,
+        gpu_info=fake_services.gpu_info,
+        video_processor=fake_services.video_processor,
+        text_encoder=fake_services.text_encoder,
+        task_runner=fake_services.task_runner,
+        ltx_api_client=fake_services.ltx_api_client,
+        zit_api_client=fake_services.zit_api_client,
+        fast_video_pipeline_class=type(fake_services.fast_video_pipeline),
+        image_generation_pipeline_class=type(fake_services.image_generation_pipeline),
+        ic_lora_pipeline_class=type(fake_services.ic_lora_pipeline),
+        depth_processor_pipeline_class=type(fake_services.depth_processor_pipeline),
+        pose_processor_pipeline_class=type(fake_services.pose_processor_pipeline),
+        a2v_pipeline_class=type(fake_services.a2v_pipeline),
+        retake_pipeline_class=type(fake_services.retake_pipeline),
+        prompt_enhancer_pipeline_class=type(fake_services.prompt_enhancer_pipeline),
+    )
+    resumed = build_initial_state(
+        test_state.config, AppSettings().model_copy(deep=True), service_bundle=bundle
+    )
+    resumed.state.hf_auth_state = HfAuthenticated(access_token="fake-hf-token", expires_at=1e18)
+    set_state_service_for_tests(resumed)
+    _enable_local_text_encoding(resumed)
+
+    assert {id1, id2} <= resumed.video_generation._queue.live_job_ids()
+
+    deadline = time.time() + 30
+    completed: set[str] = set()
+    while time.time() < deadline:
+        for jid in (id1, id2):
+            row = resumed.video_generation._queue_store.get(jid)
+            if row and row.status == "complete":
+                completed.add(jid)
+        if completed >= {id1, id2}:
+            break
+        time.sleep(0.05)
+    assert completed >= {id1, id2}
