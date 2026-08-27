@@ -119,6 +119,13 @@ class VideoGenerationHandler(StateHandlerBase):
         self._project_ingest = project_ingest_handler
         self._queue_store = GenerateQueueStore(config.app_data_dir / "generate_queue.sqlite")
         self._queue = VideoGenerateQueue(self._run_queued_job)
+
+    def resume_durable_queue(self) -> None:
+        """Rebuild the in-memory queue from incomplete SQLite rows (call after settings load)."""
+        self._resume_durable_queue()
+
+    def resume_and_reconcile(self) -> None:
+        """Resume durable jobs then drop orphaned ingest JSON. Call after load_persistent_state."""
         self._resume_durable_queue()
         self.reconcile_project_ingest()
 
