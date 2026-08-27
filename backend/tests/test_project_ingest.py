@@ -540,6 +540,30 @@ def test_delete_running_project_ingest_marks_sqlite_cancelled(
     assert row.status not in ("running", "queued")
 
 
+def test_cancel_queued_marks_sqlite_cancelled(
+    client, test_state, fake_services, create_fake_model_files
+) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    pipeline = fake_services.fast_video_pipeline
+    pipeline.inference_steps = 8
+    pipeline.step_delay_s = 0.05
+    assert client.post(
+        "/api/generate", json={**_T2V_JSON, "prompt": "runner", "projectName": "A"}
+    ).status_code == 200
+    assert pipeline.entered_inference.wait(timeout=5)
+    queued = client.post(
+        "/api/generate", json={**_T2V_JSON, "prompt": "waiting", "projectName": "B"}
+    )
+    job_id = queued.json()["id"]
+    deleted = client.delete(f"/api/project-ingest/{job_id}")
+    assert deleted.status_code == 200
+    row = test_state.video_generation._queue_store.get(job_id)
+    assert row is not None
+    assert row.status == "cancelled"
+    assert all(j["id"] != job_id for j in client.get("/api/project-ingest").json()["jobs"])
+
+
 def test_project_name_generate_writes_sqlite_row(
     client, test_state, create_fake_model_files
 ) -> None:
