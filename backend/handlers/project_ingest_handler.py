@@ -58,6 +58,20 @@ class ProjectIngestHandler:
             return
         path.unlink(missing_ok=True)
 
+    def drop_orphaned_incomplete(self, live_job_ids: set[str]) -> None:
+        """Remove incomplete disk jobs that are not in the live generate queue.
+
+        Project-ingest JSON is durable across process death; VideoGenerateQueue is not.
+        After an app/backend restart, incomplete files with empty video_path would otherwise
+        linger forever as "queued" with nothing to run them.
+        """
+        for job in self.list_jobs().jobs:
+            if job.video_path:
+                continue
+            if job.id in live_job_ids:
+                continue
+            self.drop_if_incomplete(job.id)
+
     def list_jobs(self) -> ProjectIngestListResponse:
         jobs: list[ProjectIngestJob] = []
         for path in self._dir.glob("*.json"):

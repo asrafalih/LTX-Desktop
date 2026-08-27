@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api", tags=["project-ingest"])
 def route_list_project_ingest(
     handler: AppHandler = Depends(get_state_service),
 ) -> ProjectIngestListResponse:
+    handler.video_generation.reconcile_project_ingest()
     return handler.project_ingest.list_jobs()
 
 
@@ -23,6 +24,7 @@ def route_get_project_ingest(
     job_id: str,
     handler: AppHandler = Depends(get_state_service),
 ) -> ProjectIngestJobDetailResponse:
+    handler.video_generation.reconcile_project_ingest()
     return handler.project_ingest.get_job(job_id)
 
 

@@ -211,6 +211,32 @@ def test_drop_if_incomplete_removes_running_job(test_state) -> None:
     assert ingest.list_jobs().jobs == []
 
 
+def test_drop_orphaned_incomplete_keeps_live_and_complete(test_state) -> None:
+    """Disk ingest survives process death; in-memory queue does not. Orphans must go."""
+    ingest = test_state.project_ingest
+    ingest.begin_from_generate(_named_req(prompt="stale"), "stale001")
+    ingest.begin_from_generate(_named_req(prompt="live"), "live0001")
+    ingest.begin_from_generate(_named_req(prompt="done"), "done0001")
+    ingest.enqueue_from_generate(_named_req(prompt="done"), "/tmp/done.mp4", "done0001")
+
+    ingest.drop_orphaned_incomplete({"live0001"})
+
+    jobs = ingest.list_jobs().jobs
+    assert {job.id for job in jobs} == {"live0001", "done0001"}
+    assert next(job for job in jobs if job.id == "done0001").video_path == "/tmp/done.mp4"
+    assert next(job for job in jobs if job.id == "live0001").video_path == ""
+
+
+def test_list_project_ingest_drops_stale_incomplete_after_restart(client, test_state) -> None:
+    # Simulate app close mid-queue: incomplete file on disk, empty in-memory queue.
+    test_state.project_ingest.begin_from_generate(_named_req(prompt="orphaned"), "orphan01")
+    assert len(test_state.project_ingest.list_jobs().jobs) == 1
+
+    listed = client.get("/api/project-ingest")
+    assert listed.status_code == 200
+    assert listed.json() == {"jobs": []}
+
+
 def test_list_jobs_orders_by_created_at_fifo(test_state) -> None:
     ingest = test_state.project_ingest
     ingest.begin_from_generate(_named_req(prompt="first"), "zzzz1111")

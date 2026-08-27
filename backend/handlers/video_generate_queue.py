@@ -77,6 +77,13 @@ class VideoGenerateQueue:
                 return True
             return False
 
+    def live_job_ids(self) -> set[str]:
+        with self._cv:
+            ids = {job.job_id for job in self._pending}
+            if self._running is not None:
+                ids.add(self._running.job_id)
+            return ids
+
     def _ensure_worker_locked(self) -> None:
         if self._thread is None or not self._thread.is_alive():
             self._thread = threading.Thread(

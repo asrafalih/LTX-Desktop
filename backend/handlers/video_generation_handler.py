@@ -117,6 +117,11 @@ class VideoGenerationHandler(StateHandlerBase):
         self._ltx_api_client = ltx_api_client
         self._project_ingest = project_ingest_handler
         self._queue = VideoGenerateQueue(self._run_queued_job)
+        # Incomplete ingest files outlive the in-memory queue across process death.
+        self.reconcile_project_ingest()
+
+    def reconcile_project_ingest(self) -> None:
+        self._project_ingest.drop_orphaned_incomplete(self._queue.live_job_ids())
 
     def _normalize_media_path(self, value: str | None) -> str | None:
         normalized = normalize_optional_path(value)
@@ -227,14 +232,17 @@ class VideoGenerationHandler(StateHandlerBase):
             )
 
         generation_id = self._make_generation_id()
-        self._project_ingest.begin_from_generate(req, generation_id)
         try:
             # projectName → non-blocking enqueue so each desktop Generate frees the HTTP
             # connection immediately (browsers only allow ~6 concurrent connections/host).
             # Curl without projectName still blocks until the video is ready.
+            # Enqueue before the durable ingest file so reconcile_project_ingest cannot
+            # treat a brand-new job as an orphan (disk file without a live queue entry).
             if normalize_project_name(req.projectName) is not None:
                 self._queue.enqueue(generation_id, req)
+                self._project_ingest.begin_from_generate(req, generation_id)
                 return GenerateVideoQueuedResponse(status="queued", id=generation_id)
+            self._project_ingest.begin_from_generate(req, generation_id)
             return self._queue.submit(generation_id, req)
         except HTTPError:
             self._project_ingest.drop_if_incomplete(generation_id)
