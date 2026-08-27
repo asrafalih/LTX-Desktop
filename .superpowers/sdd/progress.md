@@ -8,3 +8,4 @@ Task 4: complete (commits da99c46..d373008, review clean; minor: live_job_ids as
 Task 5: complete (commits d373008..37d8b4f, review clean)
 Task 6: complete (commits 37d8b4f..037261e, verification passed)
 Final-review Important races: fixed (see final-fix-report.md)
+Task final: complete (HEAD 8b6036e, review ready to merge)
