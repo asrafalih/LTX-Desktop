@@ -1,7 +1,7 @@
 # Durable projectName generate queue (SQLite + ingest JSON) — design
 
 **Date:** 2026-08-27  
-**Status:** Approved for planning.
+**Status:** Implemented.
 
 ## Problem
 
