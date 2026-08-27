@@ -227,13 +227,27 @@ def test_drop_orphaned_incomplete_keeps_live_and_complete(test_state) -> None:
     assert next(job for job in jobs if job.id == "live0001").video_path == ""
 
 
-def test_list_project_ingest_drops_stale_incomplete_after_restart(client, test_state) -> None:
-    # Simulate app close mid-queue: incomplete file on disk, empty in-memory queue.
-    test_state.project_ingest.begin_from_generate(_named_req(prompt="orphaned"), "orphan01")
-    assert len(test_state.project_ingest.list_jobs().jobs) == 1
-
+def test_list_keeps_incomplete_when_sqlite_row_exists(test_state, client) -> None:
+    req = _named_req(prompt="durable")
+    test_state.video_generation._queue_store.insert_queued("durable1", req)
+    test_state.project_ingest.begin_from_generate(req, "durable1")
     listed = client.get("/api/project-ingest")
     assert listed.status_code == 200
+    jobs = listed.json()["jobs"]
+    assert any(j["id"] == "durable1" and j["video_path"] == "" for j in jobs)
+
+
+def test_list_recreates_missing_ingest_json_from_sqlite(test_state, client) -> None:
+    req = _named_req(prompt="rehydrate")
+    test_state.video_generation._queue_store.insert_queued("rehyd001", req)
+    # no begin_from_generate — JSON missing
+    listed = client.get("/api/project-ingest")
+    assert any(j["id"] == "rehyd001" for j in listed.json()["jobs"])
+
+
+def test_list_still_drops_json_orphan_without_sqlite(client, test_state) -> None:
+    test_state.project_ingest.begin_from_generate(_named_req(prompt="orphaned"), "orphan01")
+    listed = client.get("/api/project-ingest")
     assert listed.json() == {"jobs": []}
 
 

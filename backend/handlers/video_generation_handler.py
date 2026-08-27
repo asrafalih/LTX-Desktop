@@ -146,7 +146,30 @@ class VideoGenerationHandler(StateHandlerBase):
             live.add(record.id)
 
     def reconcile_project_ingest(self) -> None:
-        self._project_ingest.drop_orphaned_incomplete(self._queue.live_job_ids())
+        incomplete = {job.id: job for job in self._queue_store.list_incomplete()}
+        live = self._queue.live_job_ids()
+        disk_jobs = self._project_ingest.list_jobs().jobs
+        disk_ids = {job.id for job in disk_jobs}
+
+        for disk_job in disk_jobs:
+            if disk_job.video_path:
+                continue
+            if disk_job.id not in incomplete:
+                self._project_ingest.drop_if_incomplete(disk_job.id)
+
+        for job_id, record in incomplete.items():
+            if job_id not in disk_ids:
+                self._project_ingest.begin_from_generate(record.request, job_id)
+                disk_ids.add(job_id)
+            if job_id not in live:
+                try:
+                    self._queue.enqueue(job_id, record.request)
+                    live.add(job_id)
+                except HTTPError as exc:
+                    if exc.status_code == 429:
+                        logger.error("Reconcile could not enqueue %s: queue full", job_id)
+                    else:
+                        raise
 
     def _fail_project_job(
         self,
