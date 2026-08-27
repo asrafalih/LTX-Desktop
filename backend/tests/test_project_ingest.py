@@ -491,3 +491,66 @@ def test_generate_queue_full_returns_429(test_state, fake_services, create_fake_
     while time.time() < deadline and "value" not in first:
         time.sleep(0.05)
     assert first["value"].status == "cancelled"  # type: ignore[union-attr]
+
+
+def test_project_name_generate_writes_sqlite_row(
+    client, test_state, create_fake_model_files
+) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+
+    r = client.post(
+        "/api/generate",
+        json={**_T2V_JSON, "prompt": "sqlite row", "projectName": "Moon landing"},
+    )
+    assert r.status_code == 200
+    job_id = r.json()["id"]
+    row = test_state.video_generation._queue_store.get(job_id)
+    assert row is not None
+    assert row.status in ("queued", "running", "complete")
+    assert row.project_name == "Moon landing"
+    assert row.request.prompt == "sqlite row"
+
+
+def test_queue_full_does_not_insert_sqlite(
+    test_state, fake_services, create_fake_model_files
+) -> None:
+    create_fake_model_files()
+    _enable_local_text_encoding(test_state)
+    pipeline = fake_services.fast_video_pipeline
+    pipeline.inference_steps = 20
+    pipeline.step_delay_s = 0.05
+    test_state.video_generation._queue.max_size = 1
+
+    first = test_state.video_generation.generate(
+        GenerateVideoRequest.model_validate(
+            {**_T2V_JSON, "prompt": "fill", "projectName": "Moon landing"}
+        )
+    )
+    assert first.status == "queued"
+    first_id = first.id
+    assert pipeline.entered_inference.wait(timeout=5)
+
+    with pytest.raises(HTTPError) as exc_info:
+        test_state.video_generation.generate(
+            GenerateVideoRequest.model_validate(
+                {**_T2V_JSON, "prompt": "overflow", "projectName": "Moon landing"}
+            )
+        )
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.code == "VIDEO_GENERATE_QUEUE_FULL"
+
+    store = test_state.video_generation._queue_store
+    assert store.get(first_id) is not None
+    assert all(job.request.prompt != "overflow" for job in store.list_incomplete())
+
+    test_state.generation.cancel_generation()
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if store.get(first_id) is not None and store.get(first_id).status in (
+            "complete",
+            "failed",
+            "cancelled",
+        ):
+            break
+        time.sleep(0.05)

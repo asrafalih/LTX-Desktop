@@ -42,6 +42,7 @@ from api_model_specs import (
 from handlers.outputs_handler import public_output_url
 from handlers.base import StateHandlerBase
 from server_utils.heartbeat import log_heartbeat
+from handlers.generate_queue_store import GenerateJobStatus, GenerateQueueStore
 from handlers.generation_handler import GenerationHandler
 from handlers.pipelines_handler import PipelinesHandler
 from handlers.project_ingest_handler import ProjectIngestHandler, normalize_project_name
@@ -116,12 +117,36 @@ class VideoGenerationHandler(StateHandlerBase):
         self._prompt_enhancement = prompt_enhancement_handler
         self._ltx_api_client = ltx_api_client
         self._project_ingest = project_ingest_handler
+        self._queue_store = GenerateQueueStore(config.app_data_dir / "generate_queue.sqlite")
         self._queue = VideoGenerateQueue(self._run_queued_job)
         # Incomplete ingest files outlive the in-memory queue across process death.
+        # Resume from SQLite comes in Task 3 — keep existing reconcile for now.
         self.reconcile_project_ingest()
 
     def reconcile_project_ingest(self) -> None:
         self._project_ingest.drop_orphaned_incomplete(self._queue.live_job_ids())
+
+    def _fail_project_job(
+        self,
+        req: GenerateVideoRequest,
+        generation_id: str,
+        *,
+        status: GenerateJobStatus,
+        error: str | None = None,
+    ) -> None:
+        if normalize_project_name(req.projectName) is None:
+            self._project_ingest.drop_if_incomplete(generation_id)
+            return
+        self._queue_store.set_status(generation_id, status, error=error)
+        self._project_ingest.drop_if_incomplete(generation_id)
+
+    def _complete_project_job(
+        self, req: GenerateVideoRequest, generation_id: str, output_path: str | Path
+    ) -> None:
+        path_str = str(output_path)
+        self._project_ingest.enqueue_from_generate(req, path_str, generation_id)
+        if normalize_project_name(req.projectName) is not None:
+            self._queue_store.set_status(generation_id, "complete", video_path=path_str)
 
     def _normalize_media_path(self, value: str | None) -> str | None:
         normalized = normalize_optional_path(value)
@@ -236,10 +261,14 @@ class VideoGenerationHandler(StateHandlerBase):
             # projectName → non-blocking enqueue so each desktop Generate frees the HTTP
             # connection immediately (browsers only allow ~6 concurrent connections/host).
             # Curl without projectName still blocks until the video is ready.
-            # Enqueue before the durable ingest file so reconcile_project_ingest cannot
-            # treat a brand-new job as an orphan (disk file without a live queue entry).
+            # Enqueue before durable writes so a 429 never leaves a SQLite/ingest row.
             if normalize_project_name(req.projectName) is not None:
                 self._queue.enqueue(generation_id, req)
+                try:
+                    self._queue_store.insert_queued(generation_id, req)
+                except Exception:
+                    self._queue.cancel_queued(generation_id)
+                    raise
                 self._project_ingest.begin_from_generate(req, generation_id)
                 return GenerateVideoQueuedResponse(status="queued", id=generation_id)
             self._project_ingest.begin_from_generate(req, generation_id)
@@ -251,6 +280,7 @@ class VideoGenerationHandler(StateHandlerBase):
     def cancel_queued(self, job_id: str) -> bool:
         cancelled = self._queue.cancel_queued(job_id)
         if cancelled:
+            self._queue_store.set_status(job_id, "cancelled")
             self._project_ingest.drop_if_incomplete(job_id)
         return cancelled
 
@@ -259,6 +289,8 @@ class VideoGenerationHandler(StateHandlerBase):
             force_api_generations=self.config.force_api_generations,
             settings=self.state.app_settings,
         )
+        if normalize_project_name(req.projectName) is not None:
+            self._queue_store.set_status(generation_id, "running")
         if use_api_specs:
             return self._generate_forced_api(req, generation_id)
 
@@ -344,20 +376,21 @@ class VideoGenerationHandler(StateHandlerBase):
                 )
 
                 self._generation.complete_generation(output_path)
-                self._project_ingest.enqueue_from_generate(req, str(output_path), generation_id)
+                self._complete_project_job(req, generation_id, output_path)
                 return _complete_video_response(output_path)
 
             except HTTPError as e:
                 self._generation.fail_generation(e.detail)
-                self._project_ingest.drop_if_incomplete(generation_id)
+                self._fail_project_job(req, generation_id, status="failed", error=e.detail)
                 raise
             except Exception as e:
                 self._generation.fail_generation(str(e))
-                self._project_ingest.drop_if_incomplete(generation_id)
                 if is_cancel_exception(e):
+                    self._fail_project_job(req, generation_id, status="cancelled")
                     logger.info("Generation cancelled by user")
                     return GenerateVideoCancelledResponse(status="cancelled")
 
+                self._fail_project_job(req, generation_id, status="failed", error=str(e))
                 raise HTTPError(500, str(e)) from e
 
     def _resolve_loras(self, loras: list[LoraEntry]) -> list[tuple[str, float]]:
@@ -603,19 +636,20 @@ class VideoGenerationHandler(StateHandlerBase):
 
             self._generation.update_progress("complete", 100, total_steps, total_steps)
             self._generation.complete_generation(str(output_path))
-            self._project_ingest.enqueue_from_generate(req, str(output_path), generation_id)
+            self._complete_project_job(req, generation_id, output_path)
             return _complete_video_response(output_path)
 
         except HTTPError as e:
             self._generation.fail_generation(e.detail)
-            self._project_ingest.drop_if_incomplete(generation_id)
+            self._fail_project_job(req, generation_id, status="failed", error=e.detail)
             raise
         except Exception as e:
             self._generation.fail_generation(str(e))
-            self._project_ingest.drop_if_incomplete(generation_id)
             if is_cancel_exception(e):
+                self._fail_project_job(req, generation_id, status="cancelled")
                 logger.info("Generation cancelled by user")
                 return GenerateVideoCancelledResponse(status="cancelled")
+            self._fail_project_job(req, generation_id, status="failed", error=str(e))
             raise HTTPError(500, str(e)) from e
         finally:
             self._text.clear_api_embeddings()
@@ -775,23 +809,26 @@ class VideoGenerationHandler(StateHandlerBase):
 
                 self._generation.update_progress("complete", 100, None, None)
                 self._generation.complete_generation(str(output_path))
-                self._project_ingest.enqueue_from_generate(req, str(output_path), generation_id)
+                self._complete_project_job(req, generation_id, output_path)
                 return _complete_video_response(output_path)
             except HTTPError as e:
                 self._generation.fail_generation(e.detail)
-                self._project_ingest.drop_if_incomplete(generation_id)
+                self._fail_project_job(req, generation_id, status="failed", error=e.detail)
                 raise
             except LTXAPIClientError as e:
                 mapped_error = self._map_ltx_api_generation_error(e)
                 self._generation.fail_generation(mapped_error.detail)
-                self._project_ingest.drop_if_incomplete(generation_id)
+                self._fail_project_job(
+                    req, generation_id, status="failed", error=mapped_error.detail
+                )
                 raise mapped_error from e
             except Exception as e:
                 self._generation.fail_generation(str(e))
-                self._project_ingest.drop_if_incomplete(generation_id)
                 if is_cancel_exception(e):
+                    self._fail_project_job(req, generation_id, status="cancelled")
                     logger.info("Generation cancelled by user")
                     return GenerateVideoCancelledResponse(status="cancelled")
+                self._fail_project_job(req, generation_id, status="failed", error=str(e))
                 raise HTTPError(500, str(e)) from e
 
     def _write_forced_api_video(self, video_bytes: bytes) -> Path:
