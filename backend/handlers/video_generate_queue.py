@@ -38,6 +38,8 @@ class VideoGenerateQueue:
         self._cv = threading.Condition(self._lock)
         self._pending: deque[QueuedVideoGenerate] = deque()
         self._running: QueuedVideoGenerate | None = None
+        # True only while inside _run_until_slot (after soft-cancel window closes).
+        self._executing: bool = False
         self._thread: threading.Thread | None = None
 
     def submit(self, job_id: str, req: GenerateVideoRequest) -> GenerateVideoResponse:
@@ -75,7 +77,25 @@ class VideoGenerateQueue:
                 job.response = GenerateVideoCancelledResponse(status="cancelled")
                 job.done.set()
                 return True
+            # Cover the gap after popleft / before _run_until_slot sets _executing.
+            if (
+                self._running is not None
+                and self._running.job_id == job_id
+                and not self._executing
+            ):
+                job = self._running
+                job.cancelled = True
+                job.response = GenerateVideoCancelledResponse(status="cancelled")
+                job.done.set()
+                return True
             return False
+
+    def live_job_ids(self) -> set[str]:
+        with self._cv:
+            ids = {job.job_id for job in self._pending}
+            if self._running is not None:
+                ids.add(self._running.job_id)
+            return ids
 
     def _ensure_worker_locked(self) -> None:
         if self._thread is None or not self._thread.is_alive():
@@ -88,26 +108,34 @@ class VideoGenerateQueue:
         with self._cv:
             while not self._pending:
                 self._cv.wait()
-            return self._pending.popleft()
+            job = self._pending.popleft()
+            # Assign immediately so cancel_queued can see the taken slot.
+            self._running = job
+            return job
 
     def _worker(self) -> None:
         while True:
             job = self._take_next()
-            if job.cancelled:
-                continue
-            with self._cv:
-                self._running = job
             try:
+                if job.cancelled:
+                    continue
                 self._run_until_slot(job)
             finally:
                 with self._cv:
-                    self._running = None
+                    if self._running is job:
+                        self._running = None
+                    self._executing = False
                 if not job.done.is_set():
                     if job.response is None and job.error is None:
                         job.response = GenerateVideoCancelledResponse(status="cancelled")
                     job.done.set()
 
     def _run_until_slot(self, job: QueuedVideoGenerate) -> None:
+        with self._cv:
+            if job.cancelled:
+                job.response = GenerateVideoCancelledResponse(status="cancelled")
+                return
+            self._executing = True
         while not job.cancelled:
             try:
                 job.response = self._run_job(job.req, job.job_id)

@@ -157,9 +157,11 @@ curl -sS "$LTX_HOST/api/generate" \
 }
 ```
 
-Optional fields: `imagePath`, `audioPath`, `seed`, `loras`, `negativePrompt`.
+Optional fields: `imagePath`, `endImagePath`, `endImageStrength` (default `0.8`, requires `imagePath`; **local generation only**), `audioPath`, `seed`, `loras`, `negativePrompt`.
 
-For LAN clients, do **not** pass host filesystem paths. Upload the file first, then put the returned `url` into `imagePath` or `audioPath` (see [Upload image or audio](#upload-image-or-audio)).
+FLF: set both `imagePath` (first frame) and `endImagePath` (last frame). Requires a fixed `duration` (not automatic). Rejected when the server is in API-only / forced-API mode.
+
+For LAN clients, do **not** pass host filesystem paths. Upload the file first, then put the returned `url` into `imagePath`, `endImagePath`, or `audioPath` (see [Upload image or audio](#upload-image-or-audio)).
 
 ---
 
@@ -218,13 +220,40 @@ curl -sS "$LTX_HOST/api/generate" \
   }"
 ```
 
-Accepted for `imagePath` / `audioPath`:
+Accepted for `imagePath` / `endImagePath` / `audioPath`:
 
 | Value | Behavior |
 |-------|----------|
 | Absolute path on the host | Local/desktop only |
 | `/api/uploads/<filename>` | LAN-safe ref from `POST /api/uploads` |
 | `http://…`, `/api/outputs/…`, etc. | `400` |
+
+### Generate FLF (first + last frame, local only)
+
+```bash
+# Upload start and end frames, then generate (requires local generation — not API-only mode)
+END_UPLOAD=$(curl -sS "$LTX_HOST/api/uploads" \
+  -H "authorization: Bearer $LTX_API_TOKEN" \
+  -F "file=@./end-frame.png" \
+  -F "kind=image")
+END_URL=$(echo "$END_UPLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin)['url'])")
+
+curl -sS "$LTX_HOST/api/generate" \
+  -H "authorization: Bearer $LTX_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d "{
+    \"prompt\": \"smooth transition between the two frames\",
+    \"model\": \"fast\",
+    \"duration\": 5,
+    \"fps\": 24,
+    \"resolution\": \"540p\",
+    \"imagePath\": \"$IMAGE_URL\",
+    \"endImagePath\": \"$END_URL\",
+    \"endImageStrength\": 0.8,
+    \"audio\": false,
+    \"aspectRatio\": \"16:9\"
+  }"
+```
 
 ### `GET /api/uploads/{filename}`
 

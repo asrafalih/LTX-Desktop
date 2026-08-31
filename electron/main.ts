@@ -23,7 +23,13 @@ function logAppVersion(): void {
   }
 }
 
-const gotLock = app.requestSingleInstanceLock()
+// Single-instance lock is keyed off userData. A second checkout (different
+// LTX_APP_FOLDER_NAME / LTX_USER_DATA_DIR) gets its own lock. Parallel / multi
+// instance in unpackaged runs: LTX_PARALLEL_DEV=1 or LTX_ALLOW_MULTI_INSTANCE=1.
+const allowMultiInstance =
+  !app.isPackaged
+  && (process.env.LTX_ALLOW_MULTI_INSTANCE === '1' || process.env.LTX_PARALLEL_DEV === '1')
+const gotLock = allowMultiInstance || app.requestSingleInstanceLock()
 
 if (!gotLock) {
   app.quit()

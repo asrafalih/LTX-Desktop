@@ -7,6 +7,11 @@ import { Button } from '../components/ui/button'
 import { pathToFileUrl } from '../lib/file-url'
 import { subscribeWhileGenerationMayBeActive } from '../lib/generation-progress-poll'
 import { readGenerationRecoveryContext } from '../lib/generation-recovery'
+import {
+  resolveProjectGenerationStatus,
+  type ProjectGenerationCardStatus,
+  type ProjectGenerationProgressSnapshot,
+} from '../lib/project-generation-status'
 import { useProjectIngestJobs } from '../lib/project-ingest-jobs'
 import type { Project } from '../types/project-model'
 import { useProjectReferencesMigration } from '../hooks/useProjectReferencesMigration'
@@ -22,26 +27,47 @@ function formatDate(timestamp: number): string {
   })
 }
 
-function useGeneratingProjectId(): string | null {
-  const [projectId, setProjectId] = useState(() => readGenerationRecoveryContext()?.projectId ?? null)
+function useProjectGenerationCardInputs(): {
+  progress: ProjectGenerationProgressSnapshot
+  recoveryProjectId: string | null
+  recoveryGenerationId: string | null
+} {
+  const [progress, setProgress] = useState<ProjectGenerationProgressSnapshot>(null)
+  const [recoveryProjectId, setRecoveryProjectId] = useState(
+    () => readGenerationRecoveryContext()?.projectId ?? null,
+  )
+  const [recoveryGenerationId, setRecoveryGenerationId] = useState(
+    () => readGenerationRecoveryContext()?.generationId ?? null,
+  )
   useEffect(() => {
-    const sync = () => setProjectId(readGenerationRecoveryContext()?.projectId ?? null)
-    const unsubscribe = subscribeWhileGenerationMayBeActive(sync)
-    const timer = window.setInterval(sync, 1000)
+    const syncRecovery = () => {
+      const ctx = readGenerationRecoveryContext()
+      setRecoveryProjectId(ctx?.projectId ?? null)
+      setRecoveryGenerationId(ctx?.generationId ?? null)
+    }
+    const unsubscribe = subscribeWhileGenerationMayBeActive(result => {
+      syncRecovery()
+      if (!result.ok) {
+        setProgress(null)
+        return
+      }
+      setProgress({ status: result.data.status, id: result.data.id ?? null })
+    })
+    const timer = window.setInterval(syncRecovery, 1000)
     return () => {
       unsubscribe()
       window.clearInterval(timer)
     }
   }, [])
-  return projectId
+  return { progress, recoveryProjectId, recoveryGenerationId }
 }
 
-function ProjectCard({ project, onOpen, onDelete, onRename, isGenerating }: {
+function ProjectCard({ project, onOpen, onDelete, onRename, generationStatus }: {
   project: Project
   onOpen: () => void
   onDelete: () => void
   onRename: () => void
-  isGenerating: boolean
+  generationStatus: ProjectGenerationCardStatus
 }) {
   const [showMenu, setShowMenu] = useState(false)
   const [imgError, setImgError] = useState(false)
@@ -93,10 +119,15 @@ function ProjectCard({ project, onOpen, onDelete, onRename, isGenerating }: {
         ) : (
           <Folder className="h-12 w-12 text-zinc-600" />
         )}
-        {isGenerating && (
+        {generationStatus === 'generating' && (
           <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-2">
             <Loader2 className="h-8 w-8 text-white animate-spin" />
             <span className="text-sm font-medium text-white">Generating…</span>
+          </div>
+        )}
+        {generationStatus === 'queued' && (
+          <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-2">
+            <span className="text-sm font-medium text-white">Queued</span>
           </div>
         )}
         {/* Hover overlay */}
@@ -107,7 +138,11 @@ function ProjectCard({ project, onOpen, onDelete, onRename, isGenerating }: {
       <div className="p-3">
         <h3 className="font-medium text-white truncate">{project.name}</h3>
         <p className="text-xs text-zinc-500 mt-1">
-          {isGenerating ? 'Generating video…' : formatDate(project.updatedAt)}
+          {generationStatus === 'generating'
+            ? 'Generating video…'
+            : generationStatus === 'queued'
+              ? 'Queued…'
+              : formatDate(project.updatedAt)}
         </p>
       </div>
       
@@ -151,7 +186,7 @@ function ProjectCard({ project, onOpen, onDelete, onRename, isGenerating }: {
 export function Home() {
   const { projectIds, getProject, createProject, deleteProject, renameProject } = useProjects()
   const { openProject } = useView()
-  const generatingProjectId = useGeneratingProjectId()
+  const { progress, recoveryProjectId, recoveryGenerationId } = useProjectGenerationCardInputs()
   const ingestJobs = useProjectIngestJobs()
   const { migrationStatus, migrateProjects } = useProjectReferencesMigration()
   const [isCreating, setIsCreating] = useState(false)
@@ -305,13 +340,14 @@ export function Home() {
                 <ProjectCard
                   key={project.id}
                   project={project}
-                  isGenerating={
-                    project.id === generatingProjectId
-                    || ingestJobs.some(job =>
-                      !job.video_path
-                      && job.projectName.trim().toLowerCase() === project.name.trim().toLowerCase()
-                    )
-                  }
+                  generationStatus={resolveProjectGenerationStatus({
+                    projectId: project.id,
+                    projectName: project.name,
+                    ingestJobs,
+                    progress,
+                    recoveryProjectId,
+                    recoveryGenerationId,
+                  })}
                   onOpen={() => openProject(project.id)}
                   onDelete={() => {
                     if (confirm(`Delete "${project.name}"?`)) {

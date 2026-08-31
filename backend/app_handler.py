@@ -265,6 +265,8 @@ class AppHandler:
         self.downloads.cleanup_downloading_dir()
 
         self.load_persistent_state(default_settings)
+        # Resume after settings/HF so workers start under loaded config, not defaults.
+        self.video_generation.resume_and_reconcile()
 
     def load_persistent_state(self, default_settings: AppSettings) -> None:
         """Load persisted state from disk (settings, HF auth token, etc.)."""

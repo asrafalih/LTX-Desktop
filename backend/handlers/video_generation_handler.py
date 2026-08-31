@@ -42,6 +42,7 @@ from api_model_specs import (
 from handlers.outputs_handler import public_output_url
 from handlers.base import StateHandlerBase
 from server_utils.heartbeat import log_heartbeat
+from handlers.generate_queue_store import GenerateJobStatus, GenerateQueueStore
 from handlers.generation_handler import GenerationHandler
 from handlers.pipelines_handler import PipelinesHandler
 from handlers.project_ingest_handler import ProjectIngestHandler, normalize_project_name
@@ -116,7 +117,107 @@ class VideoGenerationHandler(StateHandlerBase):
         self._prompt_enhancement = prompt_enhancement_handler
         self._ltx_api_client = ltx_api_client
         self._project_ingest = project_ingest_handler
+        self._queue_store = GenerateQueueStore(config.app_data_dir / "generate_queue.sqlite")
         self._queue = VideoGenerateQueue(self._run_queued_job)
+
+    def resume_durable_queue(self) -> None:
+        """Rebuild the in-memory queue from incomplete SQLite rows (call after settings load)."""
+        self._resume_durable_queue()
+
+    def resume_and_reconcile(self) -> None:
+        """Resume durable jobs then drop orphaned ingest JSON. Call after load_persistent_state."""
+        self._resume_durable_queue()
+        self.reconcile_project_ingest()
+
+    def _resume_durable_queue(self) -> None:
+        self._queue_store.reset_running_to_queued()
+        live = self._queue.live_job_ids()
+        for record in self._queue_store.list_incomplete():
+            if record.id in live:
+                continue
+            self._project_ingest.begin_from_generate(record.request, record.id)
+            try:
+                self._queue.enqueue(record.id, record.request)
+            except HTTPError as exc:
+                if exc.status_code == 429:
+                    logger.error("Could not resume job %s: queue full", record.id)
+                    break
+                raise
+            live.add(record.id)
+
+    def reconcile_project_ingest(self) -> None:
+        incomplete = {job.id: job for job in self._queue_store.list_incomplete()}
+        live = self._queue.live_job_ids()
+        disk_jobs = self._project_ingest.list_jobs().jobs
+        disk_ids = {job.id for job in disk_jobs}
+
+        for disk_job in disk_jobs:
+            if disk_job.video_path:
+                continue
+            if disk_job.id not in incomplete:
+                self._project_ingest.drop_if_incomplete(disk_job.id)
+
+        for job_id, record in incomplete.items():
+            if job_id not in disk_ids:
+                self._project_ingest.begin_from_generate(record.request, job_id)
+                disk_ids.add(job_id)
+            if job_id not in live:
+                try:
+                    self._queue.enqueue(job_id, record.request)
+                    live.add(job_id)
+                except HTTPError as exc:
+                    if exc.status_code == 429:
+                        logger.error("Reconcile could not enqueue %s: queue full", job_id)
+                    else:
+                        raise
+
+    def _fail_project_job(
+        self,
+        req: GenerateVideoRequest,
+        generation_id: str,
+        *,
+        status: GenerateJobStatus,
+        error: str | None = None,
+    ) -> None:
+        if normalize_project_name(req.projectName) is None:
+            self._project_ingest.drop_if_incomplete(generation_id)
+            return
+        # Do not overwrite terminal cancelled/complete/failed.
+        if not self._queue_store.try_set_status(
+            generation_id,
+            status,
+            error=error,
+            only_if_in={"queued", "running"},
+        ):
+            self._project_ingest.drop_if_incomplete(generation_id)
+            return
+        self._project_ingest.drop_if_incomplete(generation_id)
+
+    def _complete_project_job(
+        self, req: GenerateVideoRequest, generation_id: str, output_path: str | Path
+    ) -> None:
+        path_str = str(output_path)
+        if normalize_project_name(req.projectName) is not None:
+            # Atomic vs DELETE cancel: only rewrite ingest when status flipped to complete.
+            if not self._queue_store.try_set_status(
+                generation_id,
+                "complete",
+                video_path=path_str,
+                only_if_in={"queued", "running"},
+            ):
+                return
+            self._project_ingest.enqueue_from_generate(req, path_str, generation_id)
+            return
+        self._project_ingest.enqueue_from_generate(req, path_str, generation_id)
+
+    def mark_ingest_deleted(self, job_id: str) -> None:
+        """Cancel queued job or mark incomplete SQLite cancelled, then drop ingest JSON."""
+        if self.cancel_queued(job_id):
+            return
+        row = self._queue_store.get(job_id)
+        if row is not None and row.status in ("queued", "running"):
+            self._queue_store.set_status(job_id, "cancelled")
+        self._project_ingest.delete_job(job_id)
 
     def _normalize_media_path(self, value: str | None) -> str | None:
         normalized = normalize_optional_path(value)
@@ -187,6 +288,28 @@ class VideoGenerationHandler(StateHandlerBase):
             force_api_generations=self.config.force_api_generations,
             settings=self.state.app_settings,
         )
+
+        end_image_path = self._normalize_media_path(req.endImagePath)
+        if end_image_path is not None:
+            if self._normalize_media_path(req.imagePath) is None:
+                raise HTTPError(
+                    400,
+                    "END_IMAGE_REQUIRES_START",
+                    code="END_IMAGE_REQUIRES_START",
+                )
+            if use_api_specs:
+                raise HTTPError(
+                    400,
+                    "END_IMAGE_LOCAL_ONLY",
+                    code="END_IMAGE_LOCAL_ONLY",
+                )
+            if req.duration is None:
+                raise HTTPError(
+                    400,
+                    "END_IMAGE_REQUIRES_DURATION",
+                    code="END_IMAGE_REQUIRES_DURATION",
+                )
+
         validation_error = validate_generate_video_request(
             req,
             use_api_specs=use_api_specs,
@@ -205,14 +328,23 @@ class VideoGenerationHandler(StateHandlerBase):
             )
 
         generation_id = self._make_generation_id()
-        self._project_ingest.begin_from_generate(req, generation_id)
         try:
             # projectName → non-blocking enqueue so each desktop Generate frees the HTTP
             # connection immediately (browsers only allow ~6 concurrent connections/host).
             # Curl without projectName still blocks until the video is ready.
+            # Enqueue before durable writes so a 429 never leaves a SQLite/ingest row.
             if normalize_project_name(req.projectName) is not None:
                 self._queue.enqueue(generation_id, req)
+                try:
+                    self._queue_store.insert_queued(generation_id, req)
+                except Exception:
+                    if not self._queue.cancel_queued(generation_id):
+                        # Worker already executing — stop orphan GPU work.
+                        self._generation.cancel_generation()
+                    raise
+                self._project_ingest.begin_from_generate(req, generation_id)
                 return GenerateVideoQueuedResponse(status="queued", id=generation_id)
+            self._project_ingest.begin_from_generate(req, generation_id)
             return self._queue.submit(generation_id, req)
         except HTTPError:
             self._project_ingest.drop_if_incomplete(generation_id)
@@ -221,6 +353,7 @@ class VideoGenerationHandler(StateHandlerBase):
     def cancel_queued(self, job_id: str) -> bool:
         cancelled = self._queue.cancel_queued(job_id)
         if cancelled:
+            self._queue_store.set_status(job_id, "cancelled")
             self._project_ingest.drop_if_incomplete(job_id)
         return cancelled
 
@@ -229,6 +362,12 @@ class VideoGenerationHandler(StateHandlerBase):
             force_api_generations=self.config.force_api_generations,
             settings=self.state.app_settings,
         )
+        if normalize_project_name(req.projectName) is not None:
+            # DELETE may cancel after take / before GPU start; refuse to resurrect.
+            if not self._queue_store.try_set_status(
+                generation_id, "running", only_if_in={"queued", "running"}
+            ):
+                return GenerateVideoCancelledResponse(status="cancelled")
         if use_api_specs:
             return self._generate_forced_api(req, generation_id)
 
@@ -271,10 +410,16 @@ class VideoGenerationHandler(StateHandlerBase):
                 num_frames = self._compute_num_frames(duration, fps)
 
             image = None
+            end_image = None
             image_path = self._normalize_media_path(req.imagePath)
             if image_path:
                 image = self._prepare_image(image_path, width, height)
                 logger.info("Image: %s -> %sx%s", image_path, width, height)
+
+            end_path = self._normalize_media_path(req.endImagePath)
+            if end_path:
+                end_image = self._prepare_image(end_path, width, height)
+                logger.info("End image: %s -> %sx%s", end_path, width, height)
 
             try:
                 seed = req.seed if req.seed is not None else self._resolve_seed()
@@ -303,23 +448,26 @@ class VideoGenerationHandler(StateHandlerBase):
                     camera_motion=req.cameraMotion,
                     negative_prompt=req.negativePrompt,
                     loras=loras,
+                    end_image=end_image,
+                    end_image_strength=req.endImageStrength,
                 )
 
                 self._generation.complete_generation(output_path)
-                self._project_ingest.enqueue_from_generate(req, str(output_path), generation_id)
+                self._complete_project_job(req, generation_id, output_path)
                 return _complete_video_response(output_path)
 
             except HTTPError as e:
                 self._generation.fail_generation(e.detail)
-                self._project_ingest.drop_if_incomplete(generation_id)
+                self._fail_project_job(req, generation_id, status="failed", error=e.detail)
                 raise
             except Exception as e:
                 self._generation.fail_generation(str(e))
-                self._project_ingest.drop_if_incomplete(generation_id)
                 if is_cancel_exception(e):
+                    self._fail_project_job(req, generation_id, status="cancelled")
                     logger.info("Generation cancelled by user")
                     return GenerateVideoCancelledResponse(status="cancelled")
 
+                self._fail_project_job(req, generation_id, status="failed", error=str(e))
                 raise HTTPError(500, str(e)) from e
 
     def _resolve_loras(self, loras: list[LoraEntry]) -> list[tuple[str, float]]:
@@ -351,6 +499,8 @@ class VideoGenerationHandler(StateHandlerBase):
         camera_motion: VideoCameraMotion,
         negative_prompt: str,
         loras: list[tuple[str, float]] | None = None,
+        end_image: Image.Image | None = None,
+        end_image_strength: float = 0.8,
     ) -> str:
         t_total_start = time.perf_counter()
         gen_mode = "i2v" if image is not None else "t2v"
@@ -366,11 +516,30 @@ class VideoGenerationHandler(StateHandlerBase):
         total_steps = 8
 
         images: list[ImageConditioningInput] = []
-        temp_image_path: str | None = None
+        temp_image_paths: list[str] = []
         if image is not None:
-            temp_image_path = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
-            image.save(temp_image_path)
-            images = [ImageConditioningInput(path=temp_image_path, frame_idx=0, strength=1.0)]
+            temp_start = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+            image.save(temp_start)
+            temp_image_paths.append(temp_start)
+            images.append(ImageConditioningInput(path=temp_start, frame_idx=0, strength=1.0))
+
+        if end_image is not None:
+            if not isinstance(num_frames, int):
+                raise HTTPError(
+                    400,
+                    "END_IMAGE_REQUIRES_DURATION",
+                    code="END_IMAGE_REQUIRES_DURATION",
+                )
+            temp_end = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+            end_image.save(temp_end)
+            temp_image_paths.append(temp_end)
+            images.append(
+                ImageConditioningInput(
+                    path=temp_end,
+                    frame_idx=num_frames - 1,
+                    strength=end_image_strength,
+                )
+            )
 
         output_path = self._make_output_path()
 
@@ -432,8 +601,9 @@ class VideoGenerationHandler(StateHandlerBase):
             return str(output_path)
         finally:
             self._text.clear_api_embeddings()
-            if temp_image_path and os.path.exists(temp_image_path):
-                os.unlink(temp_image_path)
+            for path in temp_image_paths:
+                if os.path.exists(path):
+                    os.unlink(path)
 
     def _generate_a2v(
         self,
@@ -463,10 +633,15 @@ class VideoGenerationHandler(StateHandlerBase):
         num_frames = self._compute_num_frames(duration, fps)
 
         image = None
-        temp_image_path: str | None = None
+        end_image = None
+        temp_image_paths: list[str] = []
         image_path = self._normalize_media_path(req.imagePath)
         if image_path:
             image = self._prepare_image(image_path, width, height)
+
+        end_path = self._normalize_media_path(req.endImagePath)
+        if end_path:
+            end_image = self._prepare_image(end_path, width, height)
 
         seed = req.seed if req.seed is not None else self._resolve_seed()
         loras = self._resolve_loras(req.loras)
@@ -476,9 +651,21 @@ class VideoGenerationHandler(StateHandlerBase):
 
             images: list[ImageConditioningInput] = []
             if image is not None:
-                temp_image_path = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
-                image.save(temp_image_path)
-                images = [ImageConditioningInput(path=temp_image_path, frame_idx=0, strength=1.0)]
+                temp_start = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+                image.save(temp_start)
+                temp_image_paths.append(temp_start)
+                images.append(ImageConditioningInput(path=temp_start, frame_idx=0, strength=1.0))
+            if end_image is not None:
+                temp_end = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+                end_image.save(temp_end)
+                temp_image_paths.append(temp_end)
+                images.append(
+                    ImageConditioningInput(
+                        path=temp_end,
+                        frame_idx=num_frames - 1,
+                        strength=req.endImageStrength,
+                    )
+                )
 
             # Same ordering rule as the fast path: enhance before the pipeline takes the GPU
             # (and so before start_generation, which requires a pipeline to already be loaded).
@@ -526,24 +713,26 @@ class VideoGenerationHandler(StateHandlerBase):
 
             self._generation.update_progress("complete", 100, total_steps, total_steps)
             self._generation.complete_generation(str(output_path))
-            self._project_ingest.enqueue_from_generate(req, str(output_path), generation_id)
+            self._complete_project_job(req, generation_id, output_path)
             return _complete_video_response(output_path)
 
         except HTTPError as e:
             self._generation.fail_generation(e.detail)
-            self._project_ingest.drop_if_incomplete(generation_id)
+            self._fail_project_job(req, generation_id, status="failed", error=e.detail)
             raise
         except Exception as e:
             self._generation.fail_generation(str(e))
-            self._project_ingest.drop_if_incomplete(generation_id)
             if is_cancel_exception(e):
+                self._fail_project_job(req, generation_id, status="cancelled")
                 logger.info("Generation cancelled by user")
                 return GenerateVideoCancelledResponse(status="cancelled")
+            self._fail_project_job(req, generation_id, status="failed", error=str(e))
             raise HTTPError(500, str(e)) from e
         finally:
             self._text.clear_api_embeddings()
-            if temp_image_path and os.path.exists(temp_image_path):
-                os.unlink(temp_image_path)
+            for path in temp_image_paths:
+                if os.path.exists(path):
+                    os.unlink(path)
 
     def _prepare_image(self, image_path: str, width: int, height: int) -> Image.Image:
         validated_path = validate_image_file(image_path)
@@ -697,23 +886,26 @@ class VideoGenerationHandler(StateHandlerBase):
 
                 self._generation.update_progress("complete", 100, None, None)
                 self._generation.complete_generation(str(output_path))
-                self._project_ingest.enqueue_from_generate(req, str(output_path), generation_id)
+                self._complete_project_job(req, generation_id, output_path)
                 return _complete_video_response(output_path)
             except HTTPError as e:
                 self._generation.fail_generation(e.detail)
-                self._project_ingest.drop_if_incomplete(generation_id)
+                self._fail_project_job(req, generation_id, status="failed", error=e.detail)
                 raise
             except LTXAPIClientError as e:
                 mapped_error = self._map_ltx_api_generation_error(e)
                 self._generation.fail_generation(mapped_error.detail)
-                self._project_ingest.drop_if_incomplete(generation_id)
+                self._fail_project_job(
+                    req, generation_id, status="failed", error=mapped_error.detail
+                )
                 raise mapped_error from e
             except Exception as e:
                 self._generation.fail_generation(str(e))
-                self._project_ingest.drop_if_incomplete(generation_id)
                 if is_cancel_exception(e):
+                    self._fail_project_job(req, generation_id, status="cancelled")
                     logger.info("Generation cancelled by user")
                     return GenerateVideoCancelledResponse(status="cancelled")
+                self._fail_project_job(req, generation_id, status="failed", error=str(e))
                 raise HTTPError(500, str(e)) from e
 
     def _write_forced_api_video(self, video_bytes: bytes) -> Path:

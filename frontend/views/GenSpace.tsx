@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   Trash2, Download, Image, Video, X, Info,
   Heart, Film, Volume2, VolumeX, Sparkles, Sparkle,
-  Clock, Monitor, ChevronUp, Scissors, Music, Undo2, Redo2, Loader2,
+  Clock, Hourglass, Monitor, ChevronUp, Scissors, Music, Undo2, Redo2, Loader2,
   MoveHorizontal, Wand2, Square
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
@@ -295,10 +295,18 @@ function AssetCard({
                 {formatTime(currentTime)}
               </div>
               {generationDurationSec != null && (
-                <div className="px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1">
-                  <Clock className="h-3 w-3 opacity-80" />
-                  Generated in {formatGenerationDuration(generationDurationSec)}
-                </div>
+                <Tooltip
+                  content={`Generated in ${formatGenerationDuration(generationDurationSec)}`}
+                  side="top"
+                >
+                  <div
+                    className="px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1"
+                    aria-label={`Generated in ${formatGenerationDuration(generationDurationSec)}`}
+                  >
+                    <Hourglass className="h-3 w-3 opacity-80" />
+                    {formatGenerationDuration(generationDurationSec)}
+                  </div>
+                </Tooltip>
               )}
               <div className="flex items-center gap-1.5 rounded-lg bg-black/40 backdrop-blur-md pl-1.5 pr-2 py-1">
                 <button
@@ -334,10 +342,18 @@ function AssetCard({
           </div>
         )}
         {asset.type === 'image' && generationDurationSec != null && (
-          <div className="absolute bottom-2 left-2 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1">
-            <Clock className="h-3 w-3 opacity-80" />
-            Generated in {formatGenerationDuration(generationDurationSec)}
-          </div>
+          <Tooltip
+            content={`Generated in ${formatGenerationDuration(generationDurationSec)}`}
+            side="top"
+          >
+            <div
+              className="absolute bottom-2 left-2 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs flex items-center gap-1"
+              aria-label={`Generated in ${formatGenerationDuration(generationDurationSec)}`}
+            >
+              <Hourglass className="h-3 w-3 opacity-80" />
+              {formatGenerationDuration(generationDurationSec)}
+            </div>
+          </Tooltip>
         )}
 
         {/* Delete button (subtle, bottom right) */}
@@ -517,6 +533,10 @@ function PromptBar({
   isCancelling,
   inputImage,
   onInputImageChange,
+  endImage,
+  onEndImageChange,
+  endImageStrength,
+  onEndImageStrengthChange,
   inputAudio,
   onInputAudioChange,
   settings,
@@ -586,6 +606,10 @@ function PromptBar({
   onRetakeExtendModelChange?: (model: RetakeExtendModel) => void
   inputImage: string | null
   onInputImageChange: (path: string | null) => void
+  endImage: string | null
+  onEndImageChange: (path: string | null) => void
+  endImageStrength: number
+  onEndImageStrengthChange: (value: number) => void
   inputAudio: string | null
   onInputAudioChange: (path: string | null) => void
   settings: {
@@ -631,8 +655,10 @@ function PromptBar({
   onRedoPrompt?: () => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const endInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [isEndDragOver, setIsEndDragOver] = useState(false)
   const [isAudioDragOver, setIsAudioDragOver] = useState(false)
   const isRetake = mode === 'retake'
   const isExtend = mode === 'extend'
@@ -713,6 +739,26 @@ function PromptBar({
     }
   }
 
+  const handleEndDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsEndDragOver(false)
+
+    const assetData = e.dataTransfer.getData('asset')
+    if (assetData) {
+      const asset = JSON.parse(assetData) as Asset
+      if (asset.type === 'image') {
+        onEndImageChange(asset.path)
+      }
+      return
+    }
+
+    const file = e.dataTransfer.files?.[0]
+    if (file && file.type.startsWith('image/')) {
+      const filePath = window.electronAPI?.getPathForFile(file)
+      onEndImageChange(filePath || URL.createObjectURL(file))
+    }
+  }
+
   const handleAudioDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setIsAudioDragOver(false)
@@ -757,6 +803,18 @@ function PromptBar({
       } else {
         const url = URL.createObjectURL(file)
         onInputImageChange(url)
+      }
+    }
+  }
+
+  const handleEndFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file && file.type.startsWith('image/')) {
+      const filePath = window.electronAPI?.getPathForFile(file)
+      if (filePath) {
+        onEndImageChange(filePath)
+      } else {
+        onEndImageChange(URL.createObjectURL(file))
       }
     }
   }
@@ -805,6 +863,41 @@ function PromptBar({
               type="file"
               accept="image/*"
               onChange={handleFileSelect}
+              className="hidden"
+            />
+          </div>
+        )}
+
+        {/* End (last) frame — local i2v/a2v only, after start image is set */}
+        {mode === 'video' && !isRetake && !isIcLora && !!inputImage && !!isLocalMode && (
+          <div
+            className={`relative w-10 h-10 mt-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+              isEndDragOver ? 'border-amber-500 bg-amber-500/10' : endImage ? 'border-amber-600' : 'border-zinc-700 hover:border-zinc-500'
+            }`}
+            onDragOver={(e) => { e.preventDefault(); setIsEndDragOver(true) }}
+            onDragLeave={() => setIsEndDragOver(false)}
+            onDrop={handleEndDrop}
+            onClick={() => endInputRef.current?.click()}
+            title={endImage ? 'Last frame attached — click to change' : 'Attach last frame (FLF)'}
+          >
+            {endImage ? (
+              <>
+                <img src={pathToFileUrl(endImage)} alt="" className="w-full h-full object-cover rounded-md" />
+                <button
+                  onClick={(e) => { e.stopPropagation(); onEndImageChange(null) }}
+                  className="absolute -top-1 -right-1 p-0.5 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </>
+            ) : (
+              <Image className="h-4 w-4 text-zinc-500" />
+            )}
+            <input
+              ref={endInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleEndFileSelect}
               className="hidden"
             />
           </div>
@@ -1118,6 +1211,22 @@ function PromptBar({
                   }
                 />
 
+                {isLocalMode && endImage && (
+                  <div className="flex items-center gap-1.5 px-2 text-[10px] text-zinc-400">
+                    <span>End frame</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={endImageStrength}
+                      onChange={(e) => onEndImageStrengthChange(parseFloat(e.target.value))}
+                      className="w-20 accent-white"
+                    />
+                    <span className="w-8 text-right">{endImageStrength.toFixed(2)}</span>
+                  </div>
+                )}
+
                 {isLocalMode && canUseUserLoras && availableLoras && availableLoras.length > 0 && (
                   <LoRAPicker
                     available={availableLoras}
@@ -1294,7 +1403,26 @@ export function GenSpace() {
   const [promptHistory, setPromptHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [inputImage, setInputImage] = useState<string | null>(null)
+  const [endImage, setEndImage] = useState<string | null>(null)
+  const [endImageStrength, setEndImageStrength] = useState(0.8)
   const [inputAudio, setInputAudio] = useState<string | null>(null)
+
+  const handleInputImageChange = (path: string | null) => {
+    setInputImage(path)
+    if (!path) {
+      setEndImage(null)
+      setEndImageStrength(0.8)
+    }
+  }
+
+  const handleEndImageChange = (path: string | null) => {
+    setEndImage(path)
+    if (path) {
+      setSettings(prev => (prev.duration === null ? { ...prev, duration: 5 } : prev))
+    } else {
+      setEndImageStrength(0.8)
+    }
+  }
   const [localError, setLocalError] = useState<GenerationError | null>(null)
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
   const [gallerySize, setGallerySize] = useState<GallerySize>('medium')
@@ -1704,7 +1832,7 @@ export function GenSpace() {
   useEffect(() => {
     if (genSpaceEditImagePath) {
       setMode('video')
-      setInputImage(genSpaceEditImagePath)
+      handleInputImageChange(genSpaceEditImagePath)
       setPrompt('')
       setGenSpaceEditImagePath(null)
       setGenSpaceEditMode(null)
@@ -1900,6 +2028,8 @@ export function GenSpace() {
       } else {
         setMode(ctx.genType === 'image' ? 'image' : 'video')
         setInputImage(ctx.inputImageUrl ?? null)
+        setEndImage(ctx.endImageUrl ?? null)
+        setEndImageStrength(ctx.endImageStrength ?? 0.8)
         setInputAudio(ctx.inputAudioUrl ?? null)
         setSelectedLoras(s.loras ?? [])
         setSettings(prev => ({
@@ -1984,6 +2114,8 @@ export function GenSpace() {
             imageAspectRatio: savedVideoSettings.aspectRatio,
             imageSteps: 4,
             inputImageUrl: inputImage || undefined,
+            endImageUrl: endImage || undefined,
+            endImageStrength: endImage ? endImageStrength : undefined,
             inputAudioUrl: inputAudio || undefined,
             loras: canUseUserLoras && selectedLoras.length > 0
               ? selectedLoras.map(l => ({ ...l, ref: toModelsDirRelativeRef(l.ref, appSettings.modelsDir) }))
@@ -2006,7 +2138,7 @@ export function GenSpace() {
         logger.error(`Failed to persist generated video asset: ${err}`)
       }
     })()
-  }, [videoPath, currentProjectId, isGenerating, sanitizeVideoSettings, settings, inputImage, inputAudio, lastPrompt, addAsset, reset, selectedLoras, canUseUserLoras, appSettings.modelsDir, ingestJobs, progressGenerationId])
+  }, [videoPath, currentProjectId, isGenerating, sanitizeVideoSettings, settings, inputImage, endImage, endImageStrength, inputAudio, lastPrompt, addAsset, reset, selectedLoras, canUseUserLoras, appSettings.modelsDir, ingestJobs, progressGenerationId])
 
   // When retake completes, add as take or new asset
   useEffect(() => {
@@ -2739,10 +2871,12 @@ export function GenSpace() {
           prompt,
           settings: genSettings,
           inputImageUrl: imagePath ?? undefined,
+          endImageUrl: endImage ?? undefined,
+          endImageStrength: endImage ? endImageStrength : undefined,
           inputAudioUrl: audioPath ?? undefined,
         })
       }
-      generate(prompt, imagePath, genSettings, audioPath, activeProject?.name)
+      generate(prompt, imagePath, genSettings, audioPath, activeProject?.name, endImage, endImage ? endImageStrength : undefined)
       lastVideoEnqueueRef.current = { prompt, at: Date.now() }
       setPrompt('')
       // Don't wait for the 1s ingest poll — refresh so the new card appears in FIFO order ASAP.
@@ -2769,13 +2903,13 @@ export function GenSpace() {
   
   const handleCreateVideo = (imageAsset: Asset) => {
     setMode('video')
-    setInputImage(imageAsset.path)
+    handleInputImageChange(imageAsset.path)
     setPrompt(`${imageAsset.prompt || 'The scene comes to life...'}`)
   }
 
   const handleEditImage = (imageAsset: Asset) => {
     setMode('image')
-    setInputImage(imageAsset.path)
+    handleInputImageChange(imageAsset.path)
     setPrompt((prev) => (prev.trim() ? prev : imageAsset.prompt || ''))
   }
 
@@ -3261,7 +3395,11 @@ export function GenSpace() {
           retakeExtendModel={mode === 'extend' ? extendModel : retakeModel}
           onRetakeExtendModelChange={mode === 'extend' ? setExtendModel : setRetakeModel}
           inputImage={inputImage}
-          onInputImageChange={setInputImage}
+          onInputImageChange={handleInputImageChange}
+          endImage={endImage}
+          onEndImageChange={handleEndImageChange}
+          endImageStrength={endImageStrength}
+          onEndImageStrengthChange={setEndImageStrength}
           inputAudio={inputAudio}
           onInputAudioChange={setInputAudio}
           settings={settings}
